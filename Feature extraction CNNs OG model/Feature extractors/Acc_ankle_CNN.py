@@ -1,0 +1,283 @@
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+# -------------------------------
+# Config
+# -------------------------------
+file_path = "data/Datagenerator_files/fs50_s0.5_w1_aug2/Acc_ankle.txt"
+split_dir = Path("data/Datagenerator_files/fs50_s0.5_w1_aug2")
+
+seq_len = 50
+num_channels = 3
+
+batch_size = 64
+epochs = 200
+lr = 1e-3
+
+# Early stopping
+patience = 10
+min_delta = 1e-4
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# -------------------------------
+# Load data
+# -------------------------------
+data = np.loadtxt(file_path, delimiter=",")
+
+X = data[:, :-1]
+y = data[:, -1].astype(int) - 1  # 1..12 -> 0..11
+
+expected_features = num_channels * seq_len
+assert X.shape[1] == expected_features, f"Expected {expected_features} features, got {X.shape[1]}"
+assert y.min() >= 0 and y.max() <= 11, f"Labels out of range: min={y.min()}, max={y.max()}"
+
+X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
+num_classes = len(np.unique(y))
+
+# -------------------------------
+# Load fixed split indices
+# -------------------------------
+train_idx = np.loadtxt(split_dir / "train_idx.txt", dtype=int)
+val_idx   = np.loadtxt(split_dir / "val_idx.txt", dtype=int)
+test_idx  = np.loadtxt(split_dir / "test_idx.txt", dtype=int)
+
+N = X.shape[0]
+assert train_idx.max() < N and val_idx.max() < N and test_idx.max() < N, "Split indices out of range!"
+assert len(set(train_idx) & set(val_idx)) == 0, "Train/Val overlap!"
+assert len(set(train_idx) & set(test_idx)) == 0, "Train/Test overlap!"
+assert len(set(val_idx) & set(test_idx)) == 0, "Val/Test overlap!"
+
+X_train, y_train = X[train_idx], y[train_idx]
+X_val,   y_val   = X[val_idx],   y[val_idx]
+X_test,  y_test  = X[test_idx],  y[test_idx]
+
+print("Split sizes:", len(train_idx), len(val_idx), len(test_idx))
+
+# Torch tensors
+X_train_t = torch.tensor(X_train, dtype=torch.float32)
+X_val_t   = torch.tensor(X_val, dtype=torch.float32)
+X_test_t  = torch.tensor(X_test, dtype=torch.float32)
+
+y_train_t = torch.tensor(y_train, dtype=torch.long)
+y_val_t   = torch.tensor(y_val, dtype=torch.long)
+y_test_t  = torch.tensor(y_test, dtype=torch.long)
+
+train_loader = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=True)
+val_loader   = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False)
+test_loader  = DataLoader(TensorDataset(X_test_t, y_test_t), batch_size=batch_size, shuffle=False)
+
+# -------------------------------
+# CNN Model (same architecture as yours)
+# -------------------------------
+class IMUCNN(nn.Module):
+    def __init__(self, num_classes: int, seq_len: int, num_channels: int):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Dropout(0.3),
+
+            nn.Conv1d(128, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Dropout(0.3),
+        )
+
+        self.flattened_dim = (seq_len // 4) * 128 # 1536 numbers per sample
+
+        self.flatten = nn.Flatten() # (N,128,12) -> (N,1536)
+        self.fc1 = nn.Linear(self.flattened_dim, 32) # reduce to 32-dim embeddings 
+        self.drop_fc = nn.Dropout(0.5)
+        self.fc2 = nn.Linear(32, num_classes) # final classification layer
+
+    def extract_features(self, x):
+        # Return embedding BEFORE dropout (stable for inference)
+        x = self.features(x)
+        x = self.flatten(x)
+        z = self.fc1(x)  
+        return z
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.flatten(x)
+        x = self.fc1(x)
+        x = self.drop_fc(x)
+        logits = self.fc2(x)
+        return logits
+
+model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+# -------------------------------
+# Training + Early stopping
+# -------------------------------
+best_val_loss = float("inf")
+best_state = None
+epochs_no_improve = 0
+
+for epoch in range(epochs):
+    # ---- Train ----
+    model.train()
+    train_loss_sum = 0.0
+    train_correct = 0
+    train_total = 0
+
+    for xb, yb in train_loader:
+        xb = xb.to(device)
+        yb = yb.to(device)
+
+        optimizer.zero_grad()
+        logits = model(xb)
+        loss = criterion(logits, yb)
+        loss.backward()
+        optimizer.step()
+
+        train_loss_sum += loss.item() * xb.size(0)
+        preds = torch.argmax(logits, dim=1)
+        train_correct += (preds == yb).sum().item()
+        train_total += xb.size(0)
+
+    train_loss = train_loss_sum / train_total
+    train_acc = train_correct / train_total
+
+    # ---- Validate ----
+    model.eval()
+    val_loss_sum = 0.0
+    val_correct = 0
+    val_total = 0
+
+    with torch.no_grad():
+        for xb, yb in val_loader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+
+            logits = model(xb)
+            loss = criterion(logits, yb)
+
+            val_loss_sum += loss.item() * xb.size(0)
+            preds = torch.argmax(logits, dim=1)
+            val_correct += (preds == yb).sum().item()
+            val_total += xb.size(0)
+
+    val_loss = val_loss_sum / val_total
+    val_acc = val_correct / val_total
+
+    print(f"Epoch {epoch+1:3d}/{epochs} | "
+          f"Train loss {train_loss:.4f} acc {train_acc:.4f} | "
+          f"Val loss {val_loss:.4f} acc {val_acc:.4f}")
+
+    # ---- Early stopping check (on val loss) ----
+    if val_loss < best_val_loss - min_delta:
+        best_val_loss = val_loss
+        best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+        epochs_no_improve = 0
+    else:
+        epochs_no_improve += 1
+        if epochs_no_improve >= patience:
+            print(f"\nEarly stopping triggered at epoch {epoch+1}. Best val loss: {best_val_loss:.4f}")
+            break
+
+# Restore best model
+if best_state is not None:
+    model.load_state_dict(best_state)
+    model.to(device)
+
+# -------------------------------
+# Save best model (same folder as this script)
+# -------------------------------
+script_dir = Path(__file__).parent  # folder where this .py file lives
+sensor_name = Path(file_path).stem  # e.g. "Acc_ankle"
+
+save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
+
+torch.save({
+    "model_state_dict": model.state_dict(),
+    "num_classes": num_classes,
+    "seq_len": seq_len,
+    "num_channels": num_channels
+}, save_path)
+
+print(f"Best model saved to:\n{save_path.resolve()}")
+
+
+
+# -------------------------------
+# Evaluation on test set
+# -------------------------------
+model.eval()
+y_pred = []
+
+with torch.no_grad():
+    for xb, _ in test_loader:
+        xb = xb.to(device)
+        logits = model(xb)
+        y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy())
+
+test_acc = accuracy_score(y_test, y_pred)
+print(f"\nTest Accuracy: {test_acc:.4f}")
+
+# -------------------------------
+# Confusion Matrices
+# -------------------------------
+labels_display = list(range(1, 13))
+
+cm = confusion_matrix(y_test, y_pred)
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels_display)
+disp.plot(cmap="viridis")
+plt.title("Confusion Matrix (Counts)")
+plt.show()
+
+cm_norm = confusion_matrix(y_test, y_pred, normalize="true")
+disp_norm = ConfusionMatrixDisplay(confusion_matrix=cm_norm, display_labels=labels_display)
+disp_norm.plot(cmap="viridis", values_format=".2f")
+plt.title("Confusion Matrix (Normalized per Class)")
+plt.show()
+
+# -------------------------------
+# NEW: Extract embeddings (features) and save to NPZ
+# -------------------------------
+model.eval()
+def extract_embeddings(loader):
+    feats = []
+    labs = []
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb = xb.to(device)
+            z = model.extract_features(xb)         # (batch, 32)
+            feats.append(z.cpu().numpy())
+            labs.append(yb.numpy())
+    return np.concatenate(feats, axis=0), np.concatenate(labs, axis=0)
+
+train_Z, train_y = extract_embeddings(train_loader)
+val_Z,   val_y   = extract_embeddings(val_loader)
+test_Z,  test_y  = extract_embeddings(test_loader)
+
+# feat_dir = Path("ExtractedFeatures")
+# feat_dir.mkdir(parents=True, exist_ok=True)
+# feat_path = feat_dir / f"{sensor_name}_embeddings.npz"
+
+feat_dir = script_dir / "ExtractedFeatures"
+feat_dir.mkdir(parents=True, exist_ok=True)
+feat_path = feat_dir / f"{sensor_name}_embeddings.npz"  
+
+
+np.savez_compressed(
+    feat_path,
+    Z_train=train_Z, y_train=train_y,
+    Z_val=val_Z,     y_val=val_y,
+    Z_test=test_Z,   y_test=test_y
+)
+
+print(f"Saved embeddings to {feat_path}")
+print("Embedding shapes:",
+      train_Z.shape, val_Z.shape, test_Z.shape)
