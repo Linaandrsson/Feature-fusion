@@ -64,8 +64,15 @@ output_dir = Path("Dataset_analyzis")
 output_dir.mkdir(exist_ok=True)
 output_file = output_dir / "dataset_summary.txt"
 
+total_samples = summary_label["Samples"].sum()
+
 with open(output_file, "w") as f:
-    f.write("=== Summary by Label ===\n")
+    f.write("=== Dataset Overview ===\n")
+    f.write(f"Total Samples: {total_samples}\n")
+    f.write(f"Total Seconds: {total_samples / 50:.2f}\n")
+    f.write(f"Total Minutes: {total_samples / 50 / 60:.2f}\n")
+    f.write(f"Total Hours: {total_samples / 50 / 60 / 60:.2f}\n")
+    f.write("\n=== Summary by Label ===\n")
     f.write(summary_label.to_string(index=False))
     f.write("\n\n=== Summary by Subject ===\n")
     f.write(summary_subject.to_string(index=False))

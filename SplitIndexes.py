@@ -1,7 +1,9 @@
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-ref = np.load("/Users/linaandersson/Desktop/master/Code/data/Datagenerator_files/fs50_s0.5_w1_aug2/Acc_ankle.npz")   # X, y, subject_id
+base_dir = "/Users/linaandersson/Desktop/master/Code/data/Datagenerator_files/fs50_s0.5_w2_aug2" 
+
+ref = np.load(base_dir + "/Acc_ankle.npz")   # X, y, subject_id
 y = ref["y"]                         # shape (N,)
 subj = ref["subject_id"]             # shape (N,)  (hvis du har)
 
@@ -21,7 +23,7 @@ val_idx, test_idx = train_test_split(
 
 print(len(train_idx), len(val_idx), len(test_idx))
 
-out_path = "/Users/linaandersson/Desktop/master/Code/data/Datagenerator_files/fs50_s0.5_w1_aug2/splits.npz"
+out_path = base_dir + "/splits.npz"
 
 np.savez(
     out_path,
@@ -32,7 +34,7 @@ np.savez(
 
 print("Saved splits to:", out_path)
 
-base_dir = "/Users/linaandersson/Desktop/master/Code/data/Datagenerator_files/fs50_s0.5_w1_aug2"
+#base_dir = "/Users/linaandersson/Desktop/master/Code/data/Datagenerator_files/fs50_s0.5_w2_aug2"
 
 np.savetxt(f"{base_dir}/train_idx.txt", train_idx, fmt="%d")
 np.savetxt(f"{base_dir}/val_idx.txt", val_idx, fmt="%d")

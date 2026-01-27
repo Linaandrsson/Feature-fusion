@@ -9,10 +9,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ---- Choose which sensors to fuse (names must match your npz files) ----
 #feat_dir = Path("/Users/linaandersson/Desktop/master/Code/Feature extraction CNNs/Feature extractors/ExtractedFeatures")  # <- set this to the folder where your embeddings live
-feat_dir = Path("/Users/linaandersson/Desktop/master/Code/Feature extraction CNNs v2/Feature extractors/ExtractedFeatures")  # <- set this to the folder where your embeddings live
+feat_dir = Path("Feature extraction CNNs/Feature extractors/fs50_s0.5_w1_aug2/ExtractedFeatures")  # <- set this to the folder where your embeddings live
 #sensors = ["Acc_ankle", "Mag_ankle", "Gyro_ankle", "Acc_arm", "Gyro_arm", "Mag_arm"]  # example fusion set
 #sensors = ["Mag_ankle", "Acc_ankle", "Acc_arm", "Gyro_arm", "Gyro_ankle", "Mag_arm", "ECG"]
-sensors = ["Mag_ankle", "Acc_ankle", "Mag_arm", "Acc_arm", "Gyro_arm","Gyro_ankle", "Mag_arm", "ECG"]
+sensors = ["Mag_ankle", "Acc_ankle", "Acc_chest"]
 
 def load_sensor_npz(sensor_name: str):
     p = feat_dir / f"{sensor_name}_embeddings.npz"

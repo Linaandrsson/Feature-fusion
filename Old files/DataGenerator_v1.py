@@ -19,17 +19,17 @@ noise_level = 0.01        # relative noise level (applied if aug_size > 1)
 
 # Sensor columns (0-indexed) for LEFT-ANKLE accelerometer XYZ:
 # README columns 6,7,8 -> python indices 5,6,7
-sensor_cols = [3,4]
+sensor_cols = [0,1,2]
 
 # Path to dataset folder containing mHealth_subject*.log
 data_path = Path("/Users/linaandersson/.cache/kagglehub/datasets/nirmalsankalana/mhealth-dataset-data-set/versions/1/MHEALTHDATASET")
 
 # Output paths
-out_dir = Path("/Users/linaandersson/Desktop/master/Code/data")
+out_dir = Path("/Users/linaandersson/Desktop/master/Code/data/Datagenerator_files/fs50_s0.5_w1_aug2")
 out_dir.mkdir(parents=True, exist_ok=True)
 
-txt_out = out_dir / "ECG.txt"
-npz_out = out_dir / "ECG.npz"
+txt_out = out_dir / "Acc_chest.txt"
+npz_out = out_dir / "Acc_chest.npz"
 
 # -------------------------------
 # Helper: z-score normalize per channel in a window

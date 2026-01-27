@@ -1,0 +1,10 @@
+{
+  "fs50_s0.5_w2_aug2/Acc_ankle": 0.9812970609667233,
+  "fs50_s0.5_w2_aug2/Acc_arm": 0.967,
+  "fs50_s0.5_w2_aug2/Acc_chest": 0.9747,
+  "fs50_s0.5_w2_aug2/ECG_chest": 0.9033,
+  "fs50_s0.5_w2_aug2/Gyro_ankle": 0.9483,
+  "fs50_s0.5_w2_aug2/Gyro_arm": 0.9208,
+  "fs50_s0.5_w2_aug2/Mag_ankle": 0.9815,
+  "fs50_s0.5_w2_aug2/Mag_arm": 0.9738
+}
