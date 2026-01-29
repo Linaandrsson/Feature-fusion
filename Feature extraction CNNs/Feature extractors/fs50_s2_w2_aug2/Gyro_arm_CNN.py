@@ -11,8 +11,8 @@ import sys
 # -------------------------------
 # Config
 # -------------------------------
-file_path = "data/Datagenerator_files/fs50_s0.5_w2_aug2/Gyro_arm.txt"
-split_dir = Path("data/Datagenerator_files/fs50_s0.5_w2_aug2")
+file_path = "data/Datagenerator_files/fs50_s2_w2_aug2/Gyro_arm.txt"
+split_dir = Path("data/Datagenerator_files/fs50_s2_w2_aug2")
 
 seq_len = 100
 num_channels = 3
@@ -205,7 +205,7 @@ if best_state is not None:
 # -------------------------------
 # Save feature extractor model
 # -------------------------------
-# Works both as script and in notebook/interactive
+
 try:
     script_dir = Path(__file__).parent
 except NameError:

@@ -6,8 +6,8 @@ import random
 # CONFIG (edit these)
 # ============================================================
 FS = 50                 # sampling rate
-WINDOW_SEC = 2.0        # window length in seconds (e.g., 1.0)
-STRIDE_SEC = 0.5        # stride in seconds (e.g., 0.5)
+WINDOW_SEC = 1.0        # window length in seconds (e.g., 1.0)
+STRIDE_SEC = 1        # stride in seconds (e.g., 0.5)
 AUG_SIZE = 2            # 1 = no augmentation, 2 = original + 1 noisy, etc.
 NOISE_LEVEL = 0.01      # relative noise (only used if AUG_SIZE > 1)
 NUM_SUBJECTS = 10

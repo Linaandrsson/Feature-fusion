@@ -5,6 +5,8 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
 import matplotlib.pyplot as plt
 from pathlib import Path
+import json
+import sys
 
 # -------------------------------
 # Config
@@ -101,16 +103,23 @@ class IMUCNN(nn.Module):
 
         flattened_dim = (seq_len // 4) * 128 # (seq_len // 4) * channels_out_last_conv
 
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(flattened_dim, 32),
-            nn.Dropout(0.5),
-            nn.Linear(32, num_classes)
-        )
+        self.flatten = nn.Flatten()
+        self.fc_embed = nn.Linear(flattened_dim, 32)
+        self.dropout = nn.Dropout(0.5)
+        self.fc_out = nn.Linear(32, num_classes)
+
+    def extract_features(self, x):
+        """Extract embeddings (without final classification layer)"""
+        x = self.features(x)
+        x = self.flatten(x)
+        x = self.fc_embed(x)
+        return x
 
     def forward(self, x):
-        x = self.features(x)
-        return self.classifier(x)
+        x = self.extract_features(x)
+        x = self.dropout(x)
+        x = self.fc_out(x)
+        return x
 
 model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
 criterion = nn.CrossEntropyLoss()
@@ -191,24 +200,6 @@ if best_state is not None:
     model.to(device)
 
 # -------------------------------
-# Save best model
-# -------------------------------
-# Make the save path match the chosen sensor file name
-save_dir = Path(__file__).parent 
-save_dir.mkdir(parents=True, exist_ok=True)
-sensor_name = Path(file_path).stem  # e.g. "Gyro_arm"
-save_path = save_dir / "Models"
-
-torch.save({
-    "model_state_dict": model.state_dict(),
-    "num_classes": num_classes,
-    "seq_len": seq_len,
-    "num_channels": num_channels
-}, save_path)
-
-print(f"Best model saved to {save_path}")
-
-# -------------------------------
 # Evaluation on test set
 # -------------------------------
 model.eval()
@@ -221,7 +212,102 @@ with torch.no_grad():
         y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy())
 
 test_acc = accuracy_score(y_test, y_pred)
+
+# -------------------------------
+# Save accuracy to history
+# -------------------------------
+model_key = f"{Path(__file__).parent.name}/{Path(file_path).stem}"
+history_file = Path(__file__).parent.parent.parent.parent / "accuracy_history.json"
+
+# Load and update accuracy history
+if history_file.exists():
+    with open(history_file, 'r') as f:
+        history = json.load(f)
+else:
+    history = {}
+
+if model_key not in history:
+    history[model_key] = []
+
+history[model_key].append(test_acc)
+
+with open(history_file, 'w') as f:
+    json.dump(history, f, indent=2, sort_keys=True)
+
+# -------------------------------
+# Check if this is a new best accuracy
+# -------------------------------
+best_acc_file = Path(__file__).parent.parent.parent.parent / "best_accuracies.json"
+
+# Load existing best accuracies
+if best_acc_file.exists():
+    with open(best_acc_file, 'r') as f:
+        best_accs = json.load(f)
+else:
+    best_accs = {}
+
+previous_best = best_accs.get(model_key, 0.0)
 print(f"\nTest Accuracy: {test_acc:.4f}")
+print(f"Previous Best: {previous_best:.4f}")
+
+if test_acc <= previous_best:
+    print(f"❌ No improvement. Skipping save operations.")
+    sys.exit(0)
+
+print(f"✅ New best accuracy! Saving model artifacts...")
+
+# Update best accuracies file
+best_accs[model_key] = test_acc
+with open(best_acc_file, 'w') as f:
+    json.dump(best_accs, f, indent=2, sort_keys=True)
+
+# -------------------------------
+# Save best model (same folder as this script)
+# -------------------------------
+script_dir = Path(__file__).parent
+sensor_name = Path(file_path).stem  # "Acc_chest"
+
+save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
+
+torch.save({
+    "model_state_dict": model.state_dict(),
+    "num_classes": num_classes,
+    "seq_len": seq_len,
+    "num_channels": num_channels,
+    "embedding_dim": model.fc_embed.out_features
+}, save_path)
+
+print(f"Feature extractor saved to:\n{save_path.resolve()}")
+
+# -------------------------------
+# Find and save misclassified samples
+# -------------------------------
+misclassified_indices = []
+for i, (true_label, pred_label) in enumerate(zip(y_test, y_pred)):
+    if true_label != pred_label:
+        misclassified_indices.append({
+            'test_index': int(test_idx[i]),
+            'true_label': int(true_label + 1),
+            'predicted_label': int(pred_label + 1)
+        })
+
+if misclassified_indices:
+    import pandas as pd
+    df_misclass = pd.DataFrame(misclassified_indices)
+    
+    misclass_dir = script_dir / "Misclassified"
+    misclass_dir.mkdir(parents=True, exist_ok=True)
+    
+    misclass_file = misclass_dir / f"{sensor_name}_misclassified.csv"
+    df_misclass.to_csv(misclass_file, index=False)
+    
+    print(f"\nMisclassified samples: {len(misclassified_indices)}/{len(y_test)}")
+    print(f"Saved to: {misclass_file}")
+    
+    # Show summary of most common misclassifications
+    print("\nMost common misclassifications:")
+    misclass_pairs = df_misclass.groupby(['true_label', 'predicted_label']).size()
+    print(misclass_pairs.sort_values(ascending=False).head(10))
 
 # -------------------------------
 # Confusion Matrices (Counts + Normalized)
@@ -255,3 +341,42 @@ cm_norm_file = cm_output_dir / f"{sensor_name}_norm_matrix.png"
 plt.savefig(cm_norm_file, dpi=300, bbox_inches='tight')
 print(f"Normalized confusion matrix saved to: {cm_norm_file}")
 plt.show()
+
+# -------------------------------
+# NEW: Extract embeddings (features) and save to NPZ
+# -------------------------------
+model.eval()
+def extract_embeddings(loader):
+    feats = []
+    labs = []
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb = xb.to(device)
+            z = model.extract_features(xb)         # (batch, embedding_dim)
+            feats.append(z.cpu().numpy())
+            labs.append(yb.numpy())
+    return np.concatenate(feats, axis=0), np.concatenate(labs, axis=0)
+
+# Create data loaders for feature extraction (no shuffle to preserve order)
+train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=False)
+val_loader_feat   = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False)
+test_loader_feat  = DataLoader(TensorDataset(X_test_t, y_test_t), batch_size=batch_size, shuffle=False)
+
+train_Z, train_y = extract_embeddings(train_loader_feat)
+val_Z,   val_y   = extract_embeddings(val_loader_feat)
+test_Z,  test_y  = extract_embeddings(test_loader_feat)
+
+feat_dir = script_dir / "ExtractedFeatures"
+feat_dir.mkdir(parents=True, exist_ok=True)
+feat_path = feat_dir / f"{sensor_name}_embeddings.npz"
+
+np.savez_compressed(
+    feat_path,
+    Z_train=train_Z, y_train=train_y,
+    Z_val=val_Z,     y_val=val_y,
+    Z_test=test_Z,   y_test=test_y
+)
+
+print(f"Saved embeddings to {feat_path}")
+print("Embedding shapes:",
+      train_Z.shape, val_Z.shape, test_Z.shape)

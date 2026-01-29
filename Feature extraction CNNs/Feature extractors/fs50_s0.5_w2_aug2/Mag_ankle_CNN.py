@@ -5,6 +5,8 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
 import matplotlib.pyplot as plt
 from pathlib import Path
+import json
+import sys
 
 # -------------------------------
 # Config
@@ -238,7 +240,102 @@ with torch.no_grad():
         y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy())
 
 test_acc = accuracy_score(y_test, y_pred)
+
+# -------------------------------
+# Save accuracy to history
+# -------------------------------
+model_key = f"{Path(__file__).parent.name}/{Path(file_path).stem}"
+history_file = Path(__file__).parent.parent.parent.parent / "accuracy_history.json"
+
+# Load and update accuracy history
+if history_file.exists():
+    with open(history_file, 'r') as f:
+        history = json.load(f)
+else:
+    history = {}
+
+if model_key not in history:
+    history[model_key] = []
+
+history[model_key].append(test_acc)
+
+with open(history_file, 'w') as f:
+    json.dump(history, f, indent=2, sort_keys=True)
+
+# -------------------------------
+# Check if this is a new best accuracy
+# -------------------------------
+best_acc_file = Path(__file__).parent.parent.parent.parent / "best_accuracies.json"
+
+# Load existing best accuracies
+if best_acc_file.exists():
+    with open(best_acc_file, 'r') as f:
+        best_accs = json.load(f)
+else:
+    best_accs = {}
+
+previous_best = best_accs.get(model_key, 0.0)
 print(f"\nTest Accuracy: {test_acc:.4f}")
+print(f"Previous Best: {previous_best:.4f}")
+
+if test_acc <= previous_best:
+    print(f"❌ No improvement. Skipping save operations.")
+    sys.exit(0)
+
+print(f"✅ New best accuracy! Saving model artifacts...")
+
+# Update best accuracies file
+best_accs[model_key] = test_acc
+with open(best_acc_file, 'w') as f:
+    json.dump(best_accs, f, indent=2, sort_keys=True)
+
+# -------------------------------
+# Save best model (same folder as this script)
+# -------------------------------
+script_dir = Path(__file__).parent
+sensor_name = Path(file_path).stem
+
+save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
+
+torch.save({
+    "model_state_dict": model.state_dict(),
+    "num_classes": num_classes,
+    "seq_len": seq_len,
+    "num_channels": num_channels,
+    "embedding_dim": model.fc_embed.out_features
+}, save_path)
+
+print(f"Feature extractor saved to:\n{save_path.resolve()}")
+
+# -------------------------------
+# Find and save misclassified samples
+# -------------------------------
+misclassified_indices = []
+for i, (true_label, pred_label) in enumerate(zip(y_test, y_pred)):
+    if true_label != pred_label:
+        misclassified_indices.append({
+            'test_index': int(test_idx[i]),
+            'true_label': int(true_label + 1),
+            'predicted_label': int(pred_label + 1)
+        })
+
+if misclassified_indices:
+    import pandas as pd
+    df_misclass = pd.DataFrame(misclassified_indices)
+    
+    misclass_dir = script_dir / "Misclassified"
+    misclass_dir.mkdir(parents=True, exist_ok=True)
+    
+    misclass_file = misclass_dir / f"{sensor_name}_misclassified.csv"
+    df_misclass.to_csv(misclass_file, index=False)
+    
+    print(f"\nMisclassified samples: {len(misclassified_indices)}/{len(y_test)}")
+    print(f"Saved to: {misclass_file}")
+    
+    # Show summary of most common misclassifications
+    print("\nMost common misclassifications:")
+    misclass_pairs = df_misclass.groupby(['true_label', 'predicted_label']).size()
+    print(misclass_pairs.sort_values(ascending=False).head(10))
 
 # -------------------------------
 # Confusion Matrices (Counts + Normalized)

@@ -11,8 +11,8 @@ import sys
 # -------------------------------
 # Config
 # -------------------------------
-file_path = "data/Datagenerator_files/fs50_s0.5_w2_aug2/Gyro_arm.txt"
-split_dir = Path("data/Datagenerator_files/fs50_s0.5_w2_aug2")
+file_path = "data/Datagenerator_files/fs50_s2_w2_aug2/Mag_arm.txt"
+split_dir = Path("data/Datagenerator_files/fs50_s2_w2_aug2")
 
 seq_len = 100
 num_channels = 3
@@ -43,7 +43,7 @@ X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
 num_classes = len(np.unique(y))
 
 # -------------------------------
-# Load fixed split indices (+ sanity checks)
+# Load fixed split indices
 # -------------------------------
 train_idx = np.loadtxt(split_dir / "train_idx.txt", dtype=int)
 val_idx   = np.loadtxt(split_dir / "val_idx.txt", dtype=int)
@@ -61,18 +61,18 @@ X_test,  y_test  = X[test_idx],  y[test_idx]
 
 print("Split sizes:", len(train_idx), len(val_idx), len(test_idx))
 
-# Torch tensors (explicit dtypes)
+# Torch tensors
 X_train_t = torch.tensor(X_train, dtype=torch.float32)
-X_val_t   = torch.tensor(X_val,   dtype=torch.float32)
-X_test_t  = torch.tensor(X_test,  dtype=torch.float32)
+X_val_t   = torch.tensor(X_val, dtype=torch.float32)
+X_test_t  = torch.tensor(X_test, dtype=torch.float32)
 
 y_train_t = torch.tensor(y_train, dtype=torch.long)
-y_val_t   = torch.tensor(y_val,   dtype=torch.long)
-y_test_t  = torch.tensor(y_test,  dtype=torch.long)
+y_val_t   = torch.tensor(y_val, dtype=torch.long)
+y_test_t  = torch.tensor(y_test, dtype=torch.long)
 
 train_loader = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=True)
-val_loader   = DataLoader(TensorDataset(X_val_t,   y_val_t),   batch_size=batch_size, shuffle=False)
-test_loader  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=batch_size, shuffle=False)
+val_loader   = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False)
+test_loader  = DataLoader(TensorDataset(X_test_t, y_test_t), batch_size=batch_size, shuffle=False)
 
 # ---- Non-shuffled loaders for embedding extraction (important for fusion alignment) ----
 train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=False)
@@ -87,30 +87,31 @@ class IMUCNN(nn.Module):
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
         super().__init__()
 
+        # Convolutional feature extractor
         self.features = nn.Sequential(
-            nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
+            nn.Conv1d(num_channels, 64, kernel_size=5, padding=2),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.2),
 
-            nn.Conv1d(128, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
+            nn.Conv1d(64, 64, kernel_size=5, padding=2),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.2),
         )
 
-        self.flattened_dim = (seq_len // 4) * 128  # seq_len=50 -> 12*128 = 1536
+        self.flattened_dim = (seq_len // 4) * 64  # seq_len=50 -> 12 * 64 = 768
 
         # Embedding head (128-dim)
         self.flatten = nn.Flatten()
-        self.fc_embed = nn.Linear(self.flattened_dim, 128)
+        self.fc_embed = nn.Linear(self.flattened_dim, 64)
 
-        # Classification head
+        # Classification head (kept for training/evaluation)
         self.drop_cls = nn.Dropout(0.5)
-        self.fc_cls = nn.Linear(128, num_classes)
-
+        self.fc_cls = nn.Linear(64, num_classes)
+        
     def extract_features(self, x):
         """Return embedding BEFORE dropout (batch, 128)."""
         x = self.features(x)
@@ -129,7 +130,7 @@ criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 # -------------------------------
-# Training + Early stopping (Train+Val loss+acc print)
+# Training + Early stopping
 # -------------------------------
 best_val_loss = float("inf")
 best_state = None
@@ -203,15 +204,10 @@ if best_state is not None:
     model.to(device)
 
 # -------------------------------
-# Save feature extractor model
+# Save feature extractor model (same folder as this script)
 # -------------------------------
-# Works both as script and in notebook/interactive
-try:
-    script_dir = Path(__file__).parent
-except NameError:
-    script_dir = Path.cwd()
-
-sensor_name = Path(file_path).stem  # "Gyro_arm"
+script_dir = Path(__file__).parent
+sensor_name = Path(file_path).stem  # "Mag_arm"
 save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
 
 torch.save({
@@ -367,7 +363,6 @@ cm_norm_file = cm_output_dir / f"{sensor_name}_norm_matrix.png"
 plt.savefig(cm_norm_file, dpi=300, bbox_inches='tight')
 print(f"Normalized confusion matrix saved to: {cm_norm_file}")
 plt.show()
-
 # -------------------------------
 # Extract embeddings (features) and save to NPZ
 # -------------------------------

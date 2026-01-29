@@ -11,8 +11,8 @@ import sys
 # -------------------------------
 # Config
 # -------------------------------
-file_path = "data/Datagenerator_files/fs50_s0.5_w2_aug2/Gyro_arm.txt"
-split_dir = Path("data/Datagenerator_files/fs50_s0.5_w2_aug2")
+file_path = "data/Datagenerator_files/fs50_s2_w2_aug2/Mag_ankle.txt"
+split_dir = Path("data/Datagenerator_files/fs50_s2_w2_aug2")
 
 seq_len = 100
 num_channels = 3
@@ -42,6 +42,7 @@ assert y.min() >= 0 and y.max() <= 11, f"Labels out of range: min={y.min()}, max
 X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
 num_classes = len(np.unique(y))
 
+
 # -------------------------------
 # Load fixed split indices (+ sanity checks)
 # -------------------------------
@@ -61,7 +62,7 @@ X_test,  y_test  = X[test_idx],  y[test_idx]
 
 print("Split sizes:", len(train_idx), len(val_idx), len(test_idx))
 
-# Torch tensors (explicit dtypes)
+# Torch tensors (explicit dtypes, like your first script)
 X_train_t = torch.tensor(X_train, dtype=torch.float32)
 X_val_t   = torch.tensor(X_val,   dtype=torch.float32)
 X_test_t  = torch.tensor(X_test,  dtype=torch.float32)
@@ -88,20 +89,21 @@ class IMUCNN(nn.Module):
         super().__init__()
 
         self.features = nn.Sequential(
-            nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
+            nn.Conv1d(num_channels, 64, kernel_size=5, padding=2),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.2),
 
-            nn.Conv1d(128, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
+            nn.Conv1d(64, 64, kernel_size=5, padding=2),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.2),
         )
 
-        self.flattened_dim = (seq_len // 4) * 128  # seq_len=50 -> 12*128 = 1536
+        # seq_len=50 -> 50//2=25 -> 25//2=12 -> 12 * 64 = 768
+        self.flattened_dim = (seq_len // 4) * 64
 
         # Embedding head (128-dim)
         self.flatten = nn.Flatten()
@@ -129,7 +131,7 @@ criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 # -------------------------------
-# Training + Early stopping (Train+Val loss+acc print)
+# Training + Early stopping (with Train+Val loss+acc print)
 # -------------------------------
 best_val_loss = float("inf")
 best_state = None
@@ -211,7 +213,7 @@ try:
 except NameError:
     script_dir = Path.cwd()
 
-sensor_name = Path(file_path).stem  # "Gyro_arm"
+sensor_name = Path(file_path).stem  # "Mag_ankle"
 save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
 
 torch.save({
@@ -220,7 +222,6 @@ torch.save({
     "seq_len": seq_len,
     "num_channels": num_channels,
     "embedding_dim": model.fc_embed.out_features
-
 }, save_path)
 
 print(f"Feature extractor saved to:\n{save_path.resolve()}")
@@ -385,7 +386,6 @@ def extract_embeddings(loader):
 train_Z, train_y = extract_embeddings(train_loader_feat)
 val_Z,   val_y   = extract_embeddings(val_loader_feat)
 test_Z,  test_y  = extract_embeddings(test_loader_feat)
-
 
 feat_dir = script_dir / "ExtractedFeatures"
 feat_dir.mkdir(parents=True, exist_ok=True)

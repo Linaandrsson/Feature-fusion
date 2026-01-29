@@ -11,10 +11,10 @@ import sys
 # -------------------------------
 # Config
 # -------------------------------
-file_path = "data/Datagenerator_files/fs50_s0.5_w2_aug2/Gyro_arm.txt"
-split_dir = Path("data/Datagenerator_files/fs50_s0.5_w2_aug2")
+file_path = "data/Datagenerator_files/fs50_s1_w1_aug2/Acc_ankle.txt"
+split_dir = Path("data/Datagenerator_files/fs50_s1_w1_aug2")
 
-seq_len = 100
+seq_len = 50
 num_channels = 3
 
 batch_size = 64
@@ -86,45 +86,125 @@ test_loader_feat  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=b
 class IMUCNN(nn.Module):
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
         super().__init__()
-
         self.features = nn.Sequential(
             nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),
 
             nn.Conv1d(128, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),
         )
 
-        self.flattened_dim = (seq_len // 4) * 128  # seq_len=50 -> 12*128 = 1536
+        self.flattened_dim = (seq_len // 4) * 128 # 1536 numbers per sample
 
         # Embedding head (128-dim)
         self.flatten = nn.Flatten()
-        self.fc_embed = nn.Linear(self.flattened_dim, 128)
+        self.embed_dim = nn.Linear(self.flattened_dim, 128)
 
-        # Classification head
+        # Classification head (kept for training/evaluation)
         self.drop_cls = nn.Dropout(0.5)
         self.fc_cls = nn.Linear(128, num_classes)
 
     def extract_features(self, x):
-        """Return embedding BEFORE dropout (batch, 128)."""
+        # Return embedding BEFORE dropout (stable for inference)
         x = self.features(x)
         x = self.flatten(x)
-        z = self.fc_embed(x)
+        z = self.embed_dim(x)  
         return z
 
     def forward(self, x):
         z = self.extract_features(x)
         z = self.drop_cls(z)
-        logits = self.fc_cls(z)
+        return self.fc_cls(z)
+
+
+
+class FourLayerCNN(nn.Module):
+    """
+    4-layer 1D CNN architecture matching Fig. 1(b) in Phukan et al.
+    Conv blocks: (Conv1D -> BN -> ELU -> Dropout(0.1)) x 4
+    Filters: 8,16,32,64; kernel=3; stride=1
+    Then Flatten -> Dense: 256 -> 128 -> 64 -> 32 -> num_classes
+    """
+    def __init__(self, num_classes: int, seq_len: int, num_channels: int, embed_dim: int = 128):
+        super().__init__()
+        self.embed_dim = embed_dim  # choose which dense layer to expose as "embedding"
+
+        # Conv feature extractor (no pooling in Fig. 1(b))
+        self.conv = nn.Sequential(
+            nn.Conv1d(num_channels, 8, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(8),
+            nn.ELU(),
+            nn.Dropout(0.5),
+
+            nn.Conv1d(8, 16, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(16),
+            nn.ELU(),
+            nn.Dropout(0.5),
+
+            nn.Conv1d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(32),
+            nn.ELU(),
+            nn.Dropout(0.5),
+
+            nn.Conv1d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(64),
+            nn.ELU(),
+            nn.Dropout(0.5),
+        )
+
+        # With padding=1 and stride=1, temporal length stays seq_len
+        self.flatten = nn.Flatten()
+        self.flattened_dim = 64 * seq_len
+
+        # Dense stack (Fig. 1(b): 256,128,64,32,6)
+        self.fc1 = nn.Linear(self.flattened_dim, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 64)
+        self.fc4 = nn.Linear(64, 32)
+        self.fc_out = nn.Linear(32, num_classes)
+
+        self.act = nn.ELU()
+
+    def extract_features(self, x):
+        """
+        Returns an embedding from the dense stack.
+        By default embed_dim=128 returns output after fc2 (size 128).
+        Other options: embed_dim=256 (after fc1) or embed_dim=32 (after fc4).
+        """
+        x = self.conv(x)
+        x = self.flatten(x)
+
+        h1 = self.act(self.fc1(x))   # 256
+        h2 = self.act(self.fc2(h1))  # 128
+        h3 = self.act(self.fc3(h2))  # 64
+        h4 = self.act(self.fc4(h3))  # 32
+
+        if self.embed_dim == 256:
+            return h1
+        if self.embed_dim == 32:
+            return h4
+        # default 128
+        return h2
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.flatten(x)
+
+        x = self.act(self.fc1(x))
+        x = self.act(self.fc2(x))
+        x = self.act(self.fc3(x))
+        x = self.act(self.fc4(x))
+        logits = self.fc_out(x)
         return logits
 
-model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
+
+model = FourLayerCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -205,7 +285,7 @@ if best_state is not None:
 # -------------------------------
 # Save feature extractor model
 # -------------------------------
-# Works both as script and in notebook/interactive
+
 try:
     script_dir = Path(__file__).parent
 except NameError:
@@ -219,7 +299,8 @@ torch.save({
     "num_classes": num_classes,
     "seq_len": seq_len,
     "num_channels": num_channels,
-    "embedding_dim": model.fc_embed.out_features
+    "embedding_dim": model.embed_dim
+
 
 }, save_path)
 
@@ -300,7 +381,7 @@ torch.save({
     "num_classes": num_classes,
     "seq_len": seq_len,
     "num_channels": num_channels,
-    "embedding_dim": model.fc_embed.out_features
+    "embedding_dim": model.embed_dim
 }, save_path)
 
 print(f"Feature extractor saved to:\n{save_path.resolve()}")

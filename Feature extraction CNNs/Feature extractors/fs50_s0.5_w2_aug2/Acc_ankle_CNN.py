@@ -301,6 +301,36 @@ torch.save({
 print(f"Feature extractor saved to:\n{save_path.resolve()}")
 
 # -------------------------------
+# Find and save misclassified samples
+# -------------------------------
+misclassified_indices = []
+for i, (true_label, pred_label) in enumerate(zip(y_test, y_pred)):
+    if true_label != pred_label:
+        misclassified_indices.append({
+            'test_index': int(test_idx[i]),
+            'true_label': int(true_label + 1),
+            'predicted_label': int(pred_label + 1)
+        })
+
+if misclassified_indices:
+    import pandas as pd
+    df_misclass = pd.DataFrame(misclassified_indices)
+    
+    misclass_dir = script_dir / "Misclassified"
+    misclass_dir.mkdir(parents=True, exist_ok=True)
+    
+    misclass_file = misclass_dir / f"{sensor_name}_misclassified.csv"
+    df_misclass.to_csv(misclass_file, index=False)
+    
+    print(f"\nMisclassified samples: {len(misclassified_indices)}/{len(y_test)}")
+    print(f"Saved to: {misclass_file}")
+    
+    # Show summary of most common misclassifications
+    print("\nMost common misclassifications:")
+    misclass_pairs = df_misclass.groupby(['true_label', 'predicted_label']).size()
+    print(misclass_pairs.sort_values(ascending=False).head(10))
+
+# -------------------------------
 # Confusion Matrices (Counts + Normalized)
 # -------------------------------
 labels_display = list(range(1, 13))

@@ -11,8 +11,8 @@ import sys
 # -------------------------------
 # Config
 # -------------------------------
-file_path = "data/Datagenerator_files/fs50_s0.5_w2_aug2/Gyro_arm.txt"
-split_dir = Path("data/Datagenerator_files/fs50_s0.5_w2_aug2")
+file_path = "data/Datagenerator_files/fs50_s2_w2_aug2/Acc_arm.txt"
+split_dir = Path("data/Datagenerator_files/fs50_s2_w2_aug2")
 
 seq_len = 100
 num_channels = 3
@@ -43,7 +43,7 @@ X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
 num_classes = len(np.unique(y))
 
 # -------------------------------
-# Load fixed split indices (+ sanity checks)
+# Load fixed split indices
 # -------------------------------
 train_idx = np.loadtxt(split_dir / "train_idx.txt", dtype=int)
 val_idx   = np.loadtxt(split_dir / "val_idx.txt", dtype=int)
@@ -63,16 +63,16 @@ print("Split sizes:", len(train_idx), len(val_idx), len(test_idx))
 
 # Torch tensors (explicit dtypes)
 X_train_t = torch.tensor(X_train, dtype=torch.float32)
-X_val_t   = torch.tensor(X_val,   dtype=torch.float32)
-X_test_t  = torch.tensor(X_test,  dtype=torch.float32)
+X_val_t   = torch.tensor(X_val, dtype=torch.float32)
+X_test_t  = torch.tensor(X_test, dtype=torch.float32)
 
 y_train_t = torch.tensor(y_train, dtype=torch.long)
-y_val_t   = torch.tensor(y_val,   dtype=torch.long)
-y_test_t  = torch.tensor(y_test,  dtype=torch.long)
+y_val_t   = torch.tensor(y_val, dtype=torch.long)
+y_test_t  = torch.tensor(y_test, dtype=torch.long)
 
 train_loader = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=True)
-val_loader   = DataLoader(TensorDataset(X_val_t,   y_val_t),   batch_size=batch_size, shuffle=False)
-test_loader  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=batch_size, shuffle=False)
+val_loader   = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False)
+test_loader  = DataLoader(TensorDataset(X_test_t, y_test_t), batch_size=batch_size, shuffle=False)
 
 # ---- Non-shuffled loaders for embedding extraction (important for fusion alignment) ----
 train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=False)
@@ -81,10 +81,10 @@ test_loader_feat  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=b
 
 
 # -------------------------------
-# CNN Feature Extractor Model
+# CNN Model (DO NOT CHANGE MODEL)
 # -------------------------------
 class IMUCNN(nn.Module):
-    def __init__(self, num_classes: int, seq_len: int, num_channels: int):
+    def __init__(self, num_classes, seq_len, num_channels):
         super().__init__()
 
         self.features = nn.Sequential(
@@ -101,9 +101,9 @@ class IMUCNN(nn.Module):
             nn.Dropout(0.2),
         )
 
-        self.flattened_dim = (seq_len // 4) * 128  # seq_len=50 -> 12*128 = 1536
+        self.flattened_dim = (seq_len // 4) * 128
 
-        # Embedding head (128-dim)
+        # Embedding layer (feature representation)
         self.flatten = nn.Flatten()
         self.fc_embed = nn.Linear(self.flattened_dim, 128)
 
@@ -112,7 +112,6 @@ class IMUCNN(nn.Module):
         self.fc_cls = nn.Linear(128, num_classes)
 
     def extract_features(self, x):
-        """Return embedding BEFORE dropout (batch, 128)."""
         x = self.features(x)
         x = self.flatten(x)
         z = self.fc_embed(x)
@@ -121,15 +120,14 @@ class IMUCNN(nn.Module):
     def forward(self, x):
         z = self.extract_features(x)
         z = self.drop_cls(z)
-        logits = self.fc_cls(z)
-        return logits
+        return self.fc_cls(z)
 
-model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
+model = IMUCNN(num_classes, seq_len, num_channels).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 # -------------------------------
-# Training + Early stopping (Train+Val loss+acc print)
+# Training + Early stopping (same style as ankle-script)
 # -------------------------------
 best_val_loss = float("inf")
 best_state = None
@@ -203,15 +201,11 @@ if best_state is not None:
     model.to(device)
 
 # -------------------------------
-# Save feature extractor model
+# Save best model (same folder as this script)
 # -------------------------------
-# Works both as script and in notebook/interactive
-try:
-    script_dir = Path(__file__).parent
-except NameError:
-    script_dir = Path.cwd()
+script_dir = Path(__file__).parent
+sensor_name = Path(file_path).stem  # "Acc_arm"
 
-sensor_name = Path(file_path).stem  # "Gyro_arm"
 save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
 
 torch.save({
@@ -220,13 +214,12 @@ torch.save({
     "seq_len": seq_len,
     "num_channels": num_channels,
     "embedding_dim": model.fc_embed.out_features
-
 }, save_path)
 
 print(f"Feature extractor saved to:\n{save_path.resolve()}")
 
 # -------------------------------
-# Evaluation on test set
+# Evaluation on test set (same as ankle)
 # -------------------------------
 model.eval()
 y_pred = []
@@ -291,7 +284,7 @@ with open(best_acc_file, 'w') as f:
 # Save best model (same folder as this script)
 # -------------------------------
 script_dir = Path(__file__).parent
-sensor_name = Path(file_path).stem
+sensor_name = Path(file_path).stem  # "Acc_arm"
 
 save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
 
@@ -369,15 +362,17 @@ print(f"Normalized confusion matrix saved to: {cm_norm_file}")
 plt.show()
 
 # -------------------------------
-# Extract embeddings (features) and save to NPZ
+# Extract embeddings (features) and save to NPZ (same as ankle)
 # -------------------------------
+model.eval()
+
 def extract_embeddings(loader):
     feats = []
     labs = []
     with torch.no_grad():
         for xb, yb in loader:
             xb = xb.to(device)
-            z = model.extract_features(xb)  # (batch, 128)
+            z = model.extract_features(xb)  # (batch, 32)
             feats.append(z.cpu().numpy())
             labs.append(yb.numpy())
     return np.concatenate(feats, axis=0), np.concatenate(labs, axis=0)
@@ -385,7 +380,6 @@ def extract_embeddings(loader):
 train_Z, train_y = extract_embeddings(train_loader_feat)
 val_Z,   val_y   = extract_embeddings(val_loader_feat)
 test_Z,  test_y  = extract_embeddings(test_loader_feat)
-
 
 feat_dir = script_dir / "ExtractedFeatures"
 feat_dir.mkdir(parents=True, exist_ok=True)

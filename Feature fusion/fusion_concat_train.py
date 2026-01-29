@@ -9,10 +9,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ---- Choose which sensors to fuse (names must match your npz files) ----
 #feat_dir = Path("/Users/linaandersson/Desktop/master/Code/Feature extraction CNNs/Feature extractors/ExtractedFeatures")  # <- set this to the folder where your embeddings live
-feat_dir = Path("Feature extraction CNNs/Feature extractors/fs50_s0.5_w1_aug2/ExtractedFeatures")  # <- set this to the folder where your embeddings live
+feat_dir = Path("Feature extraction CNNs/Feature extractors/fs50_s2_w2_aug2/ExtractedFeatures")  # <- set this to the folder where your embeddings live
 #sensors = ["Acc_ankle", "Mag_ankle", "Gyro_ankle", "Acc_arm", "Gyro_arm", "Mag_arm"]  # example fusion set
-#sensors = ["Mag_ankle", "Acc_ankle", "Acc_arm", "Gyro_arm", "Gyro_ankle", "Mag_arm", "ECG"]
+#sensors = ["Mag_ankle", "Acc_ankle", "Acc_arm", "Gyro_arm", "Gyro_ankle", "Mag_arm", "ECG", "Acc_chest"]  # all sensors
 sensors = ["Mag_ankle", "Acc_ankle", "Acc_chest"]
+#sensors = ["Mag_arm"]
 
 def load_sensor_npz(sensor_name: str):
     p = feat_dir / f"{sensor_name}_embeddings.npz"
@@ -56,8 +57,6 @@ test_loader = DataLoader(
                   torch.tensor(y_test, dtype=torch.long)),
     batch_size=batch_size, shuffle=False
 )
-
-
 
 class OriginalHead(nn.Module):
     def __init__(self, in_dim: int, num_classes: int, dropout_p: float = 0.5):
