@@ -1,7 +1,7 @@
 import numpy as np
 
-a = np.load("/Users/linaandersson/Desktop/master/Code/Feature extraction CNNs/Feature extractors/fs50_s2_w2_aug2/ExtractedFeatures/Acc_ankle_embeddings.npz")
-b = np.load("/Users/linaandersson/Desktop/master/Code/Feature extraction CNNs/Feature extractors/fs50_s2_w2_aug2/ExtractedFeatures/Acc_chest_embeddings.npz")
+a = np.load("/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code/data/Datagenerator_files/fs50_s1_w1_aug2_N30/ExtractedFeatures/Acc_ankle_embeddings_NOISY.npz")
+b = np.load("/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code/data/Datagenerator_files/fs50_s1_w1_aug2_N30/ExtractedFeatures/Acc_chest_embeddings_NOISY.npz")
 
 print(np.array_equal(a["y_train"], b["y_train"]))
 print(np.array_equal(a["y_val"],   b["y_val"])) 

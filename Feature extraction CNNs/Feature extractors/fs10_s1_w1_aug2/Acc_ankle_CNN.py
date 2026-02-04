@@ -7,14 +7,14 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import json
 import sys
-from config import base_dir, seq_len
 
 # -------------------------------
 # Config
 # -------------------------------
-file_path = f"{base_dir}/Acc_ankle.txt"
-split_dir = Path(base_dir)
+file_path = "/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code/data/Datagenerator_files/fs10_s1_w1_aug2/Acc_ankle.txt"
+split_dir = Path("/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code/data/Datagenerator_files/fs10_s1_w1_aug2")
 
+seq_len = 10
 num_channels = 3
 
 batch_size = 64
@@ -26,6 +26,7 @@ patience = 10
 min_delta = 1e-4
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # -------------------------------
 # Load data
 # -------------------------------
@@ -42,7 +43,7 @@ X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
 num_classes = len(np.unique(y))
 
 # -------------------------------
-# Load fixed split indices
+# Load fixed split indices (+ sanity checks)
 # -------------------------------
 train_idx = np.loadtxt(split_dir / "train_idx.txt", dtype=int)
 val_idx   = np.loadtxt(split_dir / "val_idx.txt", dtype=int)
@@ -60,26 +61,27 @@ X_test,  y_test  = X[test_idx],  y[test_idx]
 
 print("Split sizes:", len(train_idx), len(val_idx), len(test_idx))
 
-# Torch tensors
+# Torch tensors (explicit dtypes)
 X_train_t = torch.tensor(X_train, dtype=torch.float32)
-X_val_t   = torch.tensor(X_val, dtype=torch.float32)
-X_test_t  = torch.tensor(X_test, dtype=torch.float32)
+X_val_t   = torch.tensor(X_val,   dtype=torch.float32)
+X_test_t  = torch.tensor(X_test,  dtype=torch.float32)
 
 y_train_t = torch.tensor(y_train, dtype=torch.long)
-y_val_t   = torch.tensor(y_val, dtype=torch.long)
-y_test_t  = torch.tensor(y_test, dtype=torch.long)
+y_val_t   = torch.tensor(y_val,   dtype=torch.long)
+y_test_t  = torch.tensor(y_test,  dtype=torch.long)
 
 train_loader = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=True)
-val_loader   = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False)
-test_loader  = DataLoader(TensorDataset(X_test_t, y_test_t), batch_size=batch_size, shuffle=False)
+val_loader   = DataLoader(TensorDataset(X_val_t,   y_val_t),   batch_size=batch_size, shuffle=False)
+test_loader  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=batch_size, shuffle=False)
 
 # ---- Non-shuffled loaders for embedding extraction (important for fusion alignment) ----
 train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=False)
 val_loader_feat   = DataLoader(TensorDataset(X_val_t,   y_val_t),   batch_size=batch_size, shuffle=False)
 test_loader_feat  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=batch_size, shuffle=False)
 
+
 # -------------------------------
-# CNN Model (same architecture as yours)
+# CNN Feature Extractor Model
 # -------------------------------
 class IMUCNN(nn.Module):
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
@@ -102,7 +104,7 @@ class IMUCNN(nn.Module):
 
         # Embedding head (128-dim)
         self.flatten = nn.Flatten()
-        self.fc_embed = nn.Linear(self.flattened_dim, 128)
+        self.embed_dim = nn.Linear(self.flattened_dim, 128)
 
         # Classification head (kept for training/evaluation)
         self.drop_cls = nn.Dropout(0.5)
@@ -112,7 +114,7 @@ class IMUCNN(nn.Module):
         # Return embedding BEFORE dropout (stable for inference)
         x = self.features(x)
         x = self.flatten(x)
-        z = self.fc_embed(x)  
+        z = self.embed_dim(x)  
         return z
 
     def forward(self, x):
@@ -121,12 +123,93 @@ class IMUCNN(nn.Module):
         return self.fc_cls(z)
 
 
-model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
+
+class FourLayerCNN(nn.Module):
+    """
+    4-layer 1D CNN architecture matching Fig. 1(b) in Phukan et al.
+    Conv blocks: (Conv1D -> BN -> ELU -> Dropout(0.1)) x 4
+    Filters: 8,16,32,64; kernel=3; stride=1
+    Then Flatten -> Dense: 256 -> 128 -> 64 -> 32 -> num_classes
+    """
+    def __init__(self, num_classes: int, seq_len: int, num_channels: int, embed_dim: int = 128):
+        super().__init__()
+        self.embed_dim = embed_dim  # choose which dense layer to expose as "embedding"
+
+        # Conv feature extractor (no pooling in Fig. 1(b))
+        self.conv = nn.Sequential(
+            nn.Conv1d(num_channels, 8, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(8),
+            nn.ELU(),
+            nn.Dropout(0.5),
+
+            nn.Conv1d(8, 16, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(16),
+            nn.ELU(),
+            nn.Dropout(0.5),
+
+            nn.Conv1d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(32),
+            nn.ELU(),
+            nn.Dropout(0.5),
+
+            nn.Conv1d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(64),
+            nn.ELU(),
+            nn.Dropout(0.5),
+        )
+
+        # With padding=1 and stride=1, temporal length stays seq_len
+        self.flatten = nn.Flatten()
+        self.flattened_dim = 64 * seq_len
+
+        # Dense stack (Fig. 1(b): 256,128,64,32,6)
+        self.fc1 = nn.Linear(self.flattened_dim, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 64)
+        self.fc4 = nn.Linear(64, 32)
+        self.fc_out = nn.Linear(32, num_classes)
+
+        self.act = nn.ELU()
+
+    def extract_features(self, x):
+        """
+        Returns an embedding from the dense stack.
+        By default embed_dim=128 returns output after fc2 (size 128).
+        Other options: embed_dim=256 (after fc1) or embed_dim=32 (after fc4).
+        """
+        x = self.conv(x)
+        x = self.flatten(x)
+
+        h1 = self.act(self.fc1(x))   # 256
+        h2 = self.act(self.fc2(h1))  # 128
+        h3 = self.act(self.fc3(h2))  # 64
+        h4 = self.act(self.fc4(h3))  # 32
+
+        if self.embed_dim == 256:
+            return h1
+        if self.embed_dim == 32:
+            return h4
+        # default 128
+        return h2
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.flatten(x)
+
+        x = self.act(self.fc1(x))
+        x = self.act(self.fc2(x))
+        x = self.act(self.fc3(x))
+        x = self.act(self.fc4(x))
+        logits = self.fc_out(x)
+        return logits
+
+
+model = FourLayerCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 # -------------------------------
-# Training + Early stopping
+# Training + Early stopping (Train+Val loss+acc print)
 # -------------------------------
 best_val_loss = float("inf")
 best_state = None
@@ -200,11 +283,15 @@ if best_state is not None:
     model.to(device)
 
 # -------------------------------
-# Save best model (same folder as this script)
+# Save feature extractor model
 # -------------------------------
-script_dir = Path(__file__).parent  # folder where this .py file lives
-sensor_name = Path(file_path).stem  # e.g. "Acc_ankle"
 
+try:
+    script_dir = Path(__file__).parent
+except NameError:
+    script_dir = Path.cwd()
+
+sensor_name = Path(file_path).stem  # "Gyro_arm"
 save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
 
 torch.save({
@@ -212,12 +299,12 @@ torch.save({
     "num_classes": num_classes,
     "seq_len": seq_len,
     "num_channels": num_channels,
-    "embedding_dim": model.fc_embed.out_features
+    "embedding_dim": model.embed_dim
+
+
 }, save_path)
 
-print(f"Best model saved to:\n{save_path.resolve()}")
-
-
+print(f"Feature extractor saved to:\n{save_path.resolve()}")
 
 # -------------------------------
 # Evaluation on test set
@@ -285,7 +372,7 @@ with open(best_acc_file, 'w') as f:
 # Save best model (same folder as this script)
 # -------------------------------
 script_dir = Path(__file__).parent
-sensor_name = Path(file_path).stem  # "Acc_ankle"
+sensor_name = Path(file_path).stem
 
 save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
 
@@ -294,7 +381,7 @@ torch.save({
     "num_classes": num_classes,
     "seq_len": seq_len,
     "num_channels": num_channels,
-    "embedding_dim": model.fc_embed.out_features
+    "embedding_dim": model.embed_dim
 }, save_path)
 
 print(f"Feature extractor saved to:\n{save_path.resolve()}")
@@ -363,16 +450,15 @@ print(f"Normalized confusion matrix saved to: {cm_norm_file}")
 plt.show()
 
 # -------------------------------
-# NEW: Extract embeddings (features) and save to NPZ
+# Extract embeddings (features) and save to NPZ
 # -------------------------------
-model.eval()
 def extract_embeddings(loader):
     feats = []
     labs = []
     with torch.no_grad():
         for xb, yb in loader:
             xb = xb.to(device)
-            z = model.extract_features(xb)         # (batch, 32)
+            z = model.extract_features(xb)  # (batch, 128)
             feats.append(z.cpu().numpy())
             labs.append(yb.numpy())
     return np.concatenate(feats, axis=0), np.concatenate(labs, axis=0)
@@ -381,14 +467,10 @@ train_Z, train_y = extract_embeddings(train_loader_feat)
 val_Z,   val_y   = extract_embeddings(val_loader_feat)
 test_Z,  test_y  = extract_embeddings(test_loader_feat)
 
-# feat_dir = Path("ExtractedFeatures")
-# feat_dir.mkdir(parents=True, exist_ok=True)
-# feat_path = feat_dir / f"{sensor_name}_embeddings.npz"
 
 feat_dir = script_dir / "ExtractedFeatures"
 feat_dir.mkdir(parents=True, exist_ok=True)
-feat_path = feat_dir / f"{sensor_name}_embeddings.npz"  
-
+feat_path = feat_dir / f"{sensor_name}_embeddings.npz"
 
 np.savez_compressed(
     feat_path,
@@ -397,6 +479,5 @@ np.savez_compressed(
     Z_test=test_Z,   y_test=test_y
 )
 
-print(f"Saved embeddings to {feat_path}")
-print("Embedding shapes:",
-      train_Z.shape, val_Z.shape, test_Z.shape)
+print(f"Saved embeddings to:\n{feat_path.resolve()}")
+print("Embedding shapes:", train_Z.shape, val_Z.shape, test_Z.shape)

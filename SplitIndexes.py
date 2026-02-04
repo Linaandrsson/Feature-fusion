@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-base_dir = "/Users/linaandersson/Desktop/master/Code/data/Datagenerator_files/fs50_s1_w1_aug2" 
+base_dir = "/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code/data/Datagenerator_files/fs50_s1_w1_aug2_N50" 
 
 ref = np.load(base_dir + "/Acc_ankle.npz")   # X, y, subject_id
 y = ref["y"]                         # shape (N,)

@@ -12,10 +12,11 @@ from config import base_dir, seq_len
 # -------------------------------
 # Config
 # -------------------------------
-file_path = f"{base_dir}/Acc_ankle.txt"
+file_path = f"{base_dir}/ECG.txt"
 split_dir = Path(base_dir)
 
-num_channels = 3
+
+num_channels = 2  # ECG has 2 leads
 
 batch_size = 64
 epochs = 200
@@ -26,6 +27,7 @@ patience = 10
 min_delta = 1e-4
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # -------------------------------
 # Load data
 # -------------------------------
@@ -78,10 +80,11 @@ train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=b
 val_loader_feat   = DataLoader(TensorDataset(X_val_t,   y_val_t),   batch_size=batch_size, shuffle=False)
 test_loader_feat  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=batch_size, shuffle=False)
 
+
 # -------------------------------
-# CNN Model (same architecture as yours)
+# CNN Model (same architecture, just num_channels=2)
 # -------------------------------
-class IMUCNN(nn.Module):
+class ECGCNN(nn.Module):
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
         super().__init__()
         self.features = nn.Sequential(
@@ -89,39 +92,38 @@ class IMUCNN(nn.Module):
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.3),
+            nn.Dropout(0.2),
 
             nn.Conv1d(128, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.3),
+            nn.Dropout(0.2),
         )
 
-        self.flattened_dim = (seq_len // 4) * 128 # 1536 numbers per sample
+        self.flattened_dim = (seq_len // 4) * 128
 
-        # Embedding head (128-dim)
+        # Embedding layer
         self.flatten = nn.Flatten()
         self.fc_embed = nn.Linear(self.flattened_dim, 128)
 
-        # Classification head (kept for training/evaluation)
+        # Classification head
         self.drop_cls = nn.Dropout(0.5)
         self.fc_cls = nn.Linear(128, num_classes)
 
     def extract_features(self, x):
-        # Return embedding BEFORE dropout (stable for inference)
         x = self.features(x)
         x = self.flatten(x)
-        z = self.fc_embed(x)  
+        z = self.fc_embed(x)
         return z
 
     def forward(self, x):
         z = self.extract_features(x)
         z = self.drop_cls(z)
-        return self.fc_cls(z)
+        logits = self.fc_cls(z)
+        return logits
 
-
-model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
+model = ECGCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -202,8 +204,8 @@ if best_state is not None:
 # -------------------------------
 # Save best model (same folder as this script)
 # -------------------------------
-script_dir = Path(__file__).parent  # folder where this .py file lives
-sensor_name = Path(file_path).stem  # e.g. "Acc_ankle"
+script_dir = Path(__file__).parent
+sensor_name = Path(file_path).stem  # "ECG"
 
 save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
 
@@ -215,9 +217,7 @@ torch.save({
     "embedding_dim": model.fc_embed.out_features
 }, save_path)
 
-print(f"Best model saved to:\n{save_path.resolve()}")
-
-
+print(f"Feature extractor saved to:\n{save_path.resolve()}")
 
 # -------------------------------
 # Evaluation on test set
@@ -285,7 +285,7 @@ with open(best_acc_file, 'w') as f:
 # Save best model (same folder as this script)
 # -------------------------------
 script_dir = Path(__file__).parent
-sensor_name = Path(file_path).stem  # "Acc_ankle"
+sensor_name = Path(file_path).stem
 
 save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
 
@@ -363,16 +363,17 @@ print(f"Normalized confusion matrix saved to: {cm_norm_file}")
 plt.show()
 
 # -------------------------------
-# NEW: Extract embeddings (features) and save to NPZ
+# Extract embeddings (features) and save to NPZ
 # -------------------------------
 model.eval()
+
 def extract_embeddings(loader):
     feats = []
     labs = []
     with torch.no_grad():
         for xb, yb in loader:
             xb = xb.to(device)
-            z = model.extract_features(xb)         # (batch, 32)
+            z = model.extract_features(xb)  # (batch, 32)
             feats.append(z.cpu().numpy())
             labs.append(yb.numpy())
     return np.concatenate(feats, axis=0), np.concatenate(labs, axis=0)
@@ -381,14 +382,9 @@ train_Z, train_y = extract_embeddings(train_loader_feat)
 val_Z,   val_y   = extract_embeddings(val_loader_feat)
 test_Z,  test_y  = extract_embeddings(test_loader_feat)
 
-# feat_dir = Path("ExtractedFeatures")
-# feat_dir.mkdir(parents=True, exist_ok=True)
-# feat_path = feat_dir / f"{sensor_name}_embeddings.npz"
-
 feat_dir = script_dir / "ExtractedFeatures"
 feat_dir.mkdir(parents=True, exist_ok=True)
-feat_path = feat_dir / f"{sensor_name}_embeddings.npz"  
-
+feat_path = feat_dir / f"{sensor_name}_embeddings.npz"
 
 np.savez_compressed(
     feat_path,
@@ -397,6 +393,5 @@ np.savez_compressed(
     Z_test=test_Z,   y_test=test_y
 )
 
-print(f"Saved embeddings to {feat_path}")
-print("Embedding shapes:",
-      train_Z.shape, val_Z.shape, test_Z.shape)
+print(f"Saved embeddings to:\n{feat_path.resolve()}")
+print("Embedding shapes:", train_Z.shape, val_Z.shape, test_Z.shape)

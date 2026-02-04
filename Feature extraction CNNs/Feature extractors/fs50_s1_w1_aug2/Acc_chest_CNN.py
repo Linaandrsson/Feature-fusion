@@ -12,10 +12,13 @@ from config import base_dir, seq_len
 # -------------------------------
 # Config
 # -------------------------------
-file_path = f"{base_dir}/Acc_ankle.txt"
+# Choose which sensor-file to train on:
+file_path = f"{base_dir}/Acc_chest.txt"
+
+# Folder that contains train_idx.txt / val_idx.txt / test_idx.txt
 split_dir = Path(base_dir)
 
-num_channels = 3
+num_channels = 3 # sensor channels
 
 batch_size = 64
 epochs = 200
@@ -26,6 +29,7 @@ patience = 10
 min_delta = 1e-4
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # -------------------------------
 # Load data
 # -------------------------------
@@ -42,18 +46,20 @@ X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
 num_classes = len(np.unique(y))
 
 # -------------------------------
-# Load fixed split indices
+# Load fixed split indices (shared across all sensors)
 # -------------------------------
 train_idx = np.loadtxt(split_dir / "train_idx.txt", dtype=int)
 val_idx   = np.loadtxt(split_dir / "val_idx.txt", dtype=int)
 test_idx  = np.loadtxt(split_dir / "test_idx.txt", dtype=int)
 
+# Sanity checks
 N = X.shape[0]
 assert train_idx.max() < N and val_idx.max() < N and test_idx.max() < N, "Split indices out of range!"
 assert len(set(train_idx) & set(val_idx)) == 0, "Train/Val overlap!"
 assert len(set(train_idx) & set(test_idx)) == 0, "Train/Test overlap!"
 assert len(set(val_idx) & set(test_idx)) == 0, "Val/Test overlap!"
 
+# Apply splits
 X_train, y_train = X[train_idx], y[train_idx]
 X_val,   y_val   = X[val_idx],   y[val_idx]
 X_test,  y_test  = X[test_idx],  y[test_idx]
@@ -73,53 +79,46 @@ train_loader = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_
 val_loader   = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False)
 test_loader  = DataLoader(TensorDataset(X_test_t, y_test_t), batch_size=batch_size, shuffle=False)
 
-# ---- Non-shuffled loaders for embedding extraction (important for fusion alignment) ----
-train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=False)
-val_loader_feat   = DataLoader(TensorDataset(X_val_t,   y_val_t),   batch_size=batch_size, shuffle=False)
-test_loader_feat  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=batch_size, shuffle=False)
-
 # -------------------------------
-# CNN Model (same architecture as yours)
+# CNN Model
 # -------------------------------
 class IMUCNN(nn.Module):
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
+           #nn.Conv1d(num_channels, 32, kernel_size=5, padding=2),
+           nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.3),
+            nn.Dropout(0.2),
 
             nn.Conv1d(128, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.3),
+            nn.Dropout(0.2),
         )
 
-        self.flattened_dim = (seq_len // 4) * 128 # 1536 numbers per sample
+        flattened_dim = (seq_len // 4) * 128 # (seq_len // 4) * channels_out_last_conv
 
-        # Embedding head (128-dim)
         self.flatten = nn.Flatten()
-        self.fc_embed = nn.Linear(self.flattened_dim, 128)
-
-        # Classification head (kept for training/evaluation)
-        self.drop_cls = nn.Dropout(0.5)
-        self.fc_cls = nn.Linear(128, num_classes)
+        self.fc_embed = nn.Linear(flattened_dim, 128)
+        self.dropout = nn.Dropout(0.5)
+        self.fc_out = nn.Linear(128, num_classes)
 
     def extract_features(self, x):
-        # Return embedding BEFORE dropout (stable for inference)
+        """Extract embeddings (without final classification layer)"""
         x = self.features(x)
         x = self.flatten(x)
-        z = self.fc_embed(x)  
-        return z
+        x = self.fc_embed(x)
+        return x
 
     def forward(self, x):
-        z = self.extract_features(x)
-        z = self.drop_cls(z)
-        return self.fc_cls(z)
-
+        x = self.extract_features(x)
+        x = self.dropout(x)
+        x = self.fc_out(x)
+        return x
 
 model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
 criterion = nn.CrossEntropyLoss()
@@ -200,26 +199,6 @@ if best_state is not None:
     model.to(device)
 
 # -------------------------------
-# Save best model (same folder as this script)
-# -------------------------------
-script_dir = Path(__file__).parent  # folder where this .py file lives
-sensor_name = Path(file_path).stem  # e.g. "Acc_ankle"
-
-save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
-
-torch.save({
-    "model_state_dict": model.state_dict(),
-    "num_classes": num_classes,
-    "seq_len": seq_len,
-    "num_channels": num_channels,
-    "embedding_dim": model.fc_embed.out_features
-}, save_path)
-
-print(f"Best model saved to:\n{save_path.resolve()}")
-
-
-
-# -------------------------------
 # Evaluation on test set
 # -------------------------------
 model.eval()
@@ -285,7 +264,7 @@ with open(best_acc_file, 'w') as f:
 # Save best model (same folder as this script)
 # -------------------------------
 script_dir = Path(__file__).parent
-sensor_name = Path(file_path).stem  # "Acc_ankle"
+sensor_name = Path(file_path).stem  # "Acc_chest"
 
 save_path = script_dir / f"feature_extractor_{sensor_name}.pth"
 
@@ -372,23 +351,23 @@ def extract_embeddings(loader):
     with torch.no_grad():
         for xb, yb in loader:
             xb = xb.to(device)
-            z = model.extract_features(xb)         # (batch, 32)
+            z = model.extract_features(xb)         # (batch, embedding_dim)
             feats.append(z.cpu().numpy())
             labs.append(yb.numpy())
     return np.concatenate(feats, axis=0), np.concatenate(labs, axis=0)
+
+# Create data loaders for feature extraction (no shuffle to preserve order)
+train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=False)
+val_loader_feat   = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False)
+test_loader_feat  = DataLoader(TensorDataset(X_test_t, y_test_t), batch_size=batch_size, shuffle=False)
 
 train_Z, train_y = extract_embeddings(train_loader_feat)
 val_Z,   val_y   = extract_embeddings(val_loader_feat)
 test_Z,  test_y  = extract_embeddings(test_loader_feat)
 
-# feat_dir = Path("ExtractedFeatures")
-# feat_dir.mkdir(parents=True, exist_ok=True)
-# feat_path = feat_dir / f"{sensor_name}_embeddings.npz"
-
 feat_dir = script_dir / "ExtractedFeatures"
 feat_dir.mkdir(parents=True, exist_ok=True)
-feat_path = feat_dir / f"{sensor_name}_embeddings.npz"  
-
+feat_path = feat_dir / f"{sensor_name}_embeddings.npz"
 
 np.savez_compressed(
     feat_path,

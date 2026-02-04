@@ -104,9 +104,9 @@ class IMUCNN(nn.Module):
         flattened_dim = (seq_len // 4) * 128 # (seq_len // 4) * channels_out_last_conv
 
         self.flatten = nn.Flatten()
-        self.fc_embed = nn.Linear(flattened_dim, 32)
+        self.fc_embed = nn.Linear(flattened_dim, 128)
         self.dropout = nn.Dropout(0.5)
-        self.fc_out = nn.Linear(32, num_classes)
+        self.fc_out = nn.Linear(128, num_classes)
 
     def extract_features(self, x):
         """Extract embeddings (without final classification layer)"""

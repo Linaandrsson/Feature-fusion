@@ -106,11 +106,11 @@ class IMUCNN(nn.Module):
 
         # Embedding head (128-dim)
         self.flatten = nn.Flatten()
-        self.fc_embed = nn.Linear(self.flattened_dim, 64)
+        self.fc_embed = nn.Linear(self.flattened_dim, 128)
 
         # Classification head (kept for training/evaluation)
         self.drop_cls = nn.Dropout(0.5)
-        self.fc_cls = nn.Linear(64, num_classes)
+        self.fc_cls = nn.Linear(128, num_classes)
         
     def extract_features(self, x):
         """Return embedding BEFORE dropout (batch, 128)."""
