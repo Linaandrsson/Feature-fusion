@@ -1,0 +1,362 @@
+{
+  "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+  "total_combinations": 8,
+  "statistics": {
+    "mean_test_accuracy": 0.9732946470866888,
+    "max_test_accuracy": 0.9772619611558503,
+    "min_test_accuracy": 0.961155850307911,
+    "range": 0.016106110847939337
+  },
+  "best_combination": {
+    "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+    "sensors": [
+      "Acc_ankle",
+      "Acc_arm",
+      "Acc_chest",
+      "Mag_arm",
+      "Mag_ankle",
+      "Gyro_arm",
+      "ECG"
+    ],
+    "ablated_sensors": [
+      "Gyro_ankle"
+    ],
+    "sensor_fs": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ],
+    "num_sensors": 7,
+    "use_corruption": false,
+    "fusion_mode": "concat",
+    "val_accuracy": 0.9767772511848342,
+    "val_loss": 0.04737275427834117,
+    "test_accuracy": 0.9772619611558503,
+    "gate_mean": null,
+    "gate_std": null,
+    "seed": 42,
+    "train_sensor_probs": null,
+    "test_sensor_probs": null
+  },
+  "worst_combination": {
+    "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+    "sensors": [
+      "Acc_ankle",
+      "Acc_arm",
+      "Acc_chest",
+      "Mag_ankle",
+      "Gyro_ankle",
+      "Gyro_arm",
+      "ECG"
+    ],
+    "ablated_sensors": [
+      "Mag_arm"
+    ],
+    "sensor_fs": [
+      50,
+      50,
+      50,
+      50,
+      50,
+      50,
+      50
+    ],
+    "num_sensors": 7,
+    "use_corruption": false,
+    "fusion_mode": "concat",
+    "val_accuracy": 0.9729857819905213,
+    "val_loss": 0.07451109932779701,
+    "test_accuracy": 0.961155850307911,
+    "gate_mean": null,
+    "gate_std": null,
+    "seed": 42,
+    "train_sensor_probs": null,
+    "test_sensor_probs": null
+  },
+  "ranked_results": [
+    {
+      "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+      "sensors": [
+        "Acc_ankle",
+        "Acc_arm",
+        "Acc_chest",
+        "Mag_arm",
+        "Mag_ankle",
+        "Gyro_arm",
+        "ECG"
+      ],
+      "ablated_sensors": [
+        "Gyro_ankle"
+      ],
+      "sensor_fs": [
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "num_sensors": 7,
+      "use_corruption": false,
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9767772511848342,
+      "val_loss": 0.04737275427834117,
+      "test_accuracy": 0.9772619611558503,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "train_sensor_probs": null,
+      "test_sensor_probs": null
+    },
+    {
+      "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+      "sensors": [
+        "Acc_ankle",
+        "Acc_chest",
+        "Mag_arm",
+        "Mag_ankle",
+        "Gyro_ankle",
+        "Gyro_arm",
+        "ECG"
+      ],
+      "ablated_sensors": [
+        "Acc_arm"
+      ],
+      "sensor_fs": [
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "num_sensors": 7,
+      "use_corruption": false,
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9819905213270143,
+      "val_loss": 0.05130083906989527,
+      "test_accuracy": 0.9772619611558503,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "train_sensor_probs": null,
+      "test_sensor_probs": null
+    },
+    {
+      "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+      "sensors": [
+        "Acc_ankle",
+        "Acc_arm",
+        "Mag_arm",
+        "Mag_ankle",
+        "Gyro_ankle",
+        "Gyro_arm",
+        "ECG"
+      ],
+      "ablated_sensors": [
+        "Acc_chest"
+      ],
+      "sensor_fs": [
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "num_sensors": 7,
+      "use_corruption": false,
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9791469194312796,
+      "val_loss": 0.052062888662397014,
+      "test_accuracy": 0.9767882520132638,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "train_sensor_probs": null,
+      "test_sensor_probs": null
+    },
+    {
+      "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+      "sensors": [
+        "Acc_ankle",
+        "Acc_arm",
+        "Acc_chest",
+        "Mag_arm",
+        "Mag_ankle",
+        "Gyro_ankle",
+        "ECG"
+      ],
+      "ablated_sensors": [
+        "Gyro_arm"
+      ],
+      "sensor_fs": [
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "num_sensors": 7,
+      "use_corruption": false,
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9829383886255925,
+      "val_loss": 0.053120331995860096,
+      "test_accuracy": 0.9763145428706774,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "train_sensor_probs": null,
+      "test_sensor_probs": null
+    },
+    {
+      "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+      "sensors": [
+        "Acc_ankle",
+        "Acc_arm",
+        "Acc_chest",
+        "Mag_arm",
+        "Mag_ankle",
+        "Gyro_ankle",
+        "Gyro_arm"
+      ],
+      "ablated_sensors": [
+        "ECG"
+      ],
+      "sensor_fs": [
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "num_sensors": 7,
+      "use_corruption": false,
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9824644549763033,
+      "val_loss": 0.04912760339642023,
+      "test_accuracy": 0.9748934154429181,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "train_sensor_probs": null,
+      "test_sensor_probs": null
+    },
+    {
+      "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+      "sensors": [
+        "Acc_arm",
+        "Acc_chest",
+        "Mag_arm",
+        "Mag_ankle",
+        "Gyro_ankle",
+        "Gyro_arm",
+        "ECG"
+      ],
+      "ablated_sensors": [
+        "Acc_ankle"
+      ],
+      "sensor_fs": [
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "num_sensors": 7,
+      "use_corruption": false,
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9819905213270143,
+      "val_loss": 0.05352162903095309,
+      "test_accuracy": 0.9744197063003316,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "train_sensor_probs": null,
+      "test_sensor_probs": null
+    },
+    {
+      "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+      "sensors": [
+        "Acc_ankle",
+        "Acc_arm",
+        "Acc_chest",
+        "Mag_arm",
+        "Gyro_ankle",
+        "Gyro_arm",
+        "ECG"
+      ],
+      "ablated_sensors": [
+        "Mag_ankle"
+      ],
+      "sensor_fs": [
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "num_sensors": 7,
+      "use_corruption": false,
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9772511848341232,
+      "val_loss": 0.06022684424409369,
+      "test_accuracy": 0.9682614874467077,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "train_sensor_probs": null,
+      "test_sensor_probs": null
+    },
+    {
+      "experiment_id": "ablation_k7_2026-02-16_14-04-53",
+      "sensors": [
+        "Acc_ankle",
+        "Acc_arm",
+        "Acc_chest",
+        "Mag_ankle",
+        "Gyro_ankle",
+        "Gyro_arm",
+        "ECG"
+      ],
+      "ablated_sensors": [
+        "Mag_arm"
+      ],
+      "sensor_fs": [
+        50,
+        50,
+        50,
+        50,
+        50,
+        50,
+        50
+      ],
+      "num_sensors": 7,
+      "use_corruption": false,
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9729857819905213,
+      "val_loss": 0.07451109932779701,
+      "test_accuracy": 0.961155850307911,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "train_sensor_probs": null,
+      "test_sensor_probs": null
+    }
+  ]
+}
