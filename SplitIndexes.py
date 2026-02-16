@@ -9,11 +9,11 @@ from pathlib import Path
 # The script will look for a variant subdirectory to read data from,
 # and save splits.npz to the parent directory (shared across all variants)
 
-PARENT_DIR = "/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code/data/Datagenerator_files/s1_w1_aug2"
+PARENT_DIR = "/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code/data/Datagenerator_files/s2_w2_aug2"
 
 # Optionally specify which variant to use for reading sample info
 # If None, will use the first variant found
-VARIANT_SUBDIR = "fs20_clean"  # e.g., "clean", "AWGN_s0p3_AAnAC_n1", etc.
+VARIANT_SUBDIR = "fs50_clean"  # e.g., "clean", "AWGN_s0p3_AAnAC_n1", etc.
 
 # Split ratios
 TEST_SIZE = 0.30      # 30% for validation + test

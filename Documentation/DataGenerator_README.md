@@ -86,8 +86,10 @@ Output folder: `data/Datagenerator_files/fs50_s1_w1_aug2_AWGN_s0p3_n1/`
 
 - **AWGN** (Additive White Gaussian Noise):
   ```python
-  AWGN_SIGMA = 0.3  # Standard deviation (applied after z-score)
+  AWGN_RMS_RATIO = 0.2  # Noise RMS as fraction of signal RMS (applied to raw signal)
   ```
+  Applied to raw sensor measurements before resampling and z-score normalization,
+  simulating hardware measurement noise.
 
 - **DROPOUT**:
   ```python
@@ -119,17 +121,18 @@ No scenario noise applied. Only augmentation noise is added.
 
 ```python
 SCENARIO_NOISE_TYPE = "AWGN"
-AWGN_SIGMA = 0.3
+AWGN_RMS_RATIO = 0.2
 ```
 
-Adds Gaussian noise with standard deviation `sigma`.
+Adds Gaussian noise with RMS proportional to the signal RMS per channel.
+Applied to **raw sensor measurements** before resampling and z-score normalization.
 
-**Use case:** Sensor measurement noise, electromagnetic interference.
+**Use case:** Hardware measurement noise, sensor noise floor, electromagnetic interference.
 
-**Interpretation:** Since windows are z-scored (std ≈ 1):
-- `sigma = 0.1`: Low noise
-- `sigma = 0.3`: Moderate noise
-- `sigma = 0.5`: High noise
+**Interpretation:** Noise RMS = `rms_ratio` × Signal RMS (per channel)
+- `rms_ratio = 0.1`: Low noise (10% of signal RMS)
+- `rms_ratio = 0.2`: Moderate noise (20% of signal RMS) 
+- `rms_ratio = 0.3`: High noise (30% of signal RMS)
 
 ### 3. DROPOUT
 

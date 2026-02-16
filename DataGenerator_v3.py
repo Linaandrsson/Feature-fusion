@@ -6,13 +6,24 @@ import json
 import time
 from typing import List, Dict, Optional, Tuple
 
+# Import noise simulation functions and default parameters
+from Noise_simulation.AWGN import apply_awgn_rms_ratio, AWGN_RMS_RATIO
+from Noise_simulation.Dropout import apply_dropout, DROPOUT_VALUE
+from Noise_simulation.WeakSignal import apply_weak_signal, WEAK_SIGNAL_FACTOR
+from Noise_simulation.Tremor import (
+    simulate_and_add_tremor_imu,
+    TREMOR_MU, TREMOR_SIGMA, TREMOR_DT,
+    TREMOR_ACC_RMS, TREMOR_GYRO_RMS, TREMOR_MAG_RMS,
+    TREMOR_INTERMITTENT, TREMOR_ON_PROB, TREMOR_MIN_ON_SEC, TREMOR_MAX_ON_SEC
+)
+
 # ============================================================
 # CONFIG - Basic parameters
 # ============================================================
 ORIGINAL_FS = 50        # original sampling rate in the dataset (Hz)
-FS = 10                 # target sampling rate (Hz) - set same as ORIGINAL_FS to skip resampling
-WINDOW_SEC = 1.0        # window length in seconds
-STRIDE_SEC = 1.0        # stride in seconds
+FS = 30                 # target sampling rate (Hz) - set same as ORIGINAL_FS to skip resampling
+WINDOW_SEC = 2.0        # window length in seconds
+STRIDE_SEC = 2.0        # stride in seconds
 AUG_SIZE = 2            # number of augmented copies per window
 NOISE_LEVEL = 0.01      # augmentation noise level (NOT scenario noise)
 NUM_SUBJECTS = 10
@@ -29,21 +40,26 @@ OUT_BASE = Path(
 
 # Seeds for reproducibility
 SEED = 0                        # Controls augmentation noise
-NOISE_SCENARIO_SEED = 123       # Controls scenario noise and sensor selection
+NOISE_SCENARIO_SEED = 123       # Controls scenario noise (change this to get different tremor realizations)
 
 # ============================================================
-# CONFIG - Scenario Noise (applied BEFORE augmentation)
+# CONFIG - Scenario Noise (applied to RAW signal BEFORE preprocessing)
 # ============================================================
 # Set SCENARIO_NOISE_TYPE to None for clean dataset (no scenario noise)
-# Options: None, "AWGN", "DROPOUT", "WEAK_SIGNAL"
+# Options: None, "AWGN", "DROPOUT", "WEAK_SIGNAL", "TREMOR"
 SCENARIO_NOISE_TYPE = None # or None for clean dataset
 
-# Noise parameters (only used if SCENARIO_NOISE_TYPE is set)
-AWGN_SIGMA = 0.3                # For AWGN: sigma value (applied after z-score)
-DROPOUT_VALUE = 0.0             # For DROPOUT: value to set (usually 0)
-WEAK_SIGNAL_FACTOR = 0.2        # For WEAK_SIGNAL: multiplication factor (e.g., 0.2 or 0.5)
+# Noise parameters - defaults are imported from Noise_simulation/ modules
+# Uncomment and modify any parameter below to override the defaults:
+
+# AWGN_RMS_RATIO = 0.3          # Override default (0.2) - noise RMS as fraction of signal RMS
+# DROPOUT_VALUE = 0.0           # Override default (0.0)  
+# WEAK_SIGNAL_FACTOR = 0.3      # Override default (0.2)
+
 
 # Note: When SCENARIO_NOISE_TYPE is set, ALL sensors receive noise in ALL windows
+#       For TREMOR: Always applies to all IMU sensors (Acc/Gyro/Mag on ankle/arm/chest)
+#       To get different tremor scenarios, change NOISE_SCENARIO_SEED above
 
 # ============================================================
 # SENSOR COLUMN MAP (0-indexed)
@@ -116,11 +132,15 @@ def make_scenario_tag() -> str:
     
     # Add parameter
     if SCENARIO_NOISE_TYPE == "AWGN":
-        tag += f"_s{AWGN_SIGMA}".replace(".", "p")
+        tag += f"_rms{AWGN_RMS_RATIO}".replace(".", "p")
     elif SCENARIO_NOISE_TYPE == "DROPOUT":
         tag += "_drop"
     elif SCENARIO_NOISE_TYPE == "WEAK_SIGNAL":
         tag += f"_w{WEAK_SIGNAL_FACTOR}".replace(".", "p")
+    elif SCENARIO_NOISE_TYPE == "TREMOR":
+        tag += f"_mu{TREMOR_MU}_s{TREMOR_SIGMA}".replace(".", "p")
+        if TREMOR_INTERMITTENT:
+            tag += "_int"
     
     return tag
 
@@ -238,28 +258,89 @@ def flatten_channel_blocks(X_c_l: np.ndarray) -> np.ndarray:
 # ============================================================
 # Scenario Noise Functions
 # ============================================================
-def apply_awgn(win: np.ndarray, sigma: float, rng: np.random.RandomState) -> np.ndarray:
-    """
-    Apply Additive White Gaussian Noise.
-    win: shape (L, C), already z-scored -> std ~ 1 per channel
-    """
-    return win + sigma * rng.randn(*win.shape)
+# Note: Noise functions are now imported from Noise_simulation/
+# - AWGN: Additive White Gaussian Noise
+# - Dropout: Complete sensor failure (constant value)
+# - WeakSignal: Attenuated signal strength
+# - Tremor: Stochastic van der Pol oscillator-based tremor
+#           Always applies to ALL IMU sensors (Acc/Gyro/Mag on all body parts)
+#           Change NOISE_SCENARIO_SEED to get different tremor scenarios
+
+# Global cache for tremor realizations: key = (window_idx, body_part)
+# value = dict with keys: 'acc_noise', 'gyro_noise', 'mag_noise' (each (L,3)), 'meta'
+_TREMOR_CACHE = {}
 
 
-def apply_dropout(win: np.ndarray, value: float = 0.0) -> np.ndarray:
-    """
-    Apply dropout: set entire window to a constant value (typically 0).
-    win: shape (L, C)
-    """
-    return np.full_like(win, value)
+def extract_body_part(sensor_name: str) -> str:
+    """Extract body part from sensor name (e.g., 'Acc_arm' -> 'arm', 'ECG' -> 'chest')."""
+    if 'ankle' in sensor_name:
+        return 'ankle'
+    elif 'arm' in sensor_name:
+        return 'arm'
+    else:
+        return 'chest'
 
 
-def apply_weak_signal(win: np.ndarray, factor: float) -> np.ndarray:
+def get_sensor_type(sensor_name: str) -> str:
+    """Extract sensor type from sensor name (e.g., 'Acc_arm' -> 'Acc', 'Gyro_ankle' -> 'Gyro')."""
+    return sensor_name.split('_')[0]
+
+
+def generate_tremor_for_window(
+    window_idx: int,
+    body_part: str,
+    L: int,
+    fs: float
+) -> Dict[str, np.ndarray]:
     """
-    Apply weak signal: multiply window by a factor < 1.
-    win: shape (L, C)
+    Generate tremor for a specific window and body part.
+    Returns dict with 'acc_noise', 'gyro_noise', 'mag_noise' (each (L,3)) and 'meta'.
+    
+    This ensures Acc/Gyro/Mag share same tremor realization (same VdP process, direction, envelope)
+    but use different state variables: acc uses x1, gyro uses x2, mag uses x1.
     """
-    return win * factor
+    # Create deterministic seed for this (window_idx, body_part)
+    body_part_offset = {'ankle': 0, 'arm': 1, 'chest': 2}.get(body_part, 0)
+    seed = (NOISE_SCENARIO_SEED + window_idx * 7919 + body_part_offset * 10000) & 0xffffffff
+    
+    # Create dummy signals (zeros) to apply tremor
+    X_acc_dummy = np.zeros((L, 3), dtype=np.float64)
+    X_gyro_dummy = np.zeros((L, 3), dtype=np.float64)
+    X_mag_dummy = np.zeros((L, 3), dtype=np.float64)
+    
+    # Generate tremor (this returns corrupted signals, but we want just the noise)
+    X_acc_t, X_gyro_t, X_mag_t, meta = simulate_and_add_tremor_imu(
+        X_acc_dummy,
+        X_gyro_dummy,
+        X_mag_dummy,
+        fs=fs,
+        mu=TREMOR_MU,
+        sigma=TREMOR_SIGMA,
+        dt=TREMOR_DT,
+        acc_rms=TREMOR_ACC_RMS,
+        gyro_rms=TREMOR_GYRO_RMS,
+        mag_rms=TREMOR_MAG_RMS,
+        use_acc_state="x1",
+        use_gyro_state="x2",
+        use_mag_state="x1",
+        intermittent=TREMOR_INTERMITTENT,
+        on_prob=TREMOR_ON_PROB,
+        min_on_sec=TREMOR_MIN_ON_SEC,
+        max_on_sec=TREMOR_MAX_ON_SEC,
+        seed=seed
+    )
+    
+    # Extract noise (difference from dummy)
+    acc_noise = X_acc_t - X_acc_dummy
+    gyro_noise = X_gyro_t - X_gyro_dummy
+    mag_noise = X_mag_t - X_mag_dummy
+    
+    return {
+        'acc_noise': acc_noise.astype(np.float32),
+        'gyro_noise': gyro_noise.astype(np.float32),
+        'mag_noise': mag_noise.astype(np.float32),
+        'meta': meta
+    }
 
 
 def apply_scenario_noise(
@@ -272,17 +353,53 @@ def apply_scenario_noise(
     Apply scenario noise based on type.
     Uses deterministic seed per (window, sensor) to avoid loop-order dependency.
     win: shape (L, C)
+    
+    Note: Noise functions are imported from Noise_simulation/
+    For AWGN/TREMOR: Applied to RAW signal BEFORE resampling and z-score.
+    For TREMOR: uses cache to ensure Acc/Gyro/Mag share same tremor per body part.
     """
     # Create deterministic seed per (window_idx, sensor_name)
-    seed = (NOISE_SCENARIO_SEED + window_idx * 9176 + hash(sensor_name) % 100000) & 0xffffffff
+    # Use sensor index from SENSORS dict for deterministic offset
+    sensor_names = list(SENSORS.keys())
+    sensor_offset = sensor_names.index(sensor_name) if sensor_name in sensor_names else 0
+    seed = (NOISE_SCENARIO_SEED + window_idx * 9176 + sensor_offset * 1000) & 0xffffffff
     local_rng = np.random.RandomState(seed)
     
     if noise_type == "AWGN":
-        return apply_awgn(win, AWGN_SIGMA, local_rng)
+        return apply_awgn_rms_ratio(win, AWGN_RMS_RATIO, local_rng)
     elif noise_type == "DROPOUT":
         return apply_dropout(win, DROPOUT_VALUE)
     elif noise_type == "WEAK_SIGNAL":
         return apply_weak_signal(win, WEAK_SIGNAL_FACTOR)
+    elif noise_type == "TREMOR":
+        # For tremor: ensure consistency across Acc/Gyro/Mag for same body part
+        body_part = extract_body_part(sensor_name)
+        sensor_type = get_sensor_type(sensor_name)
+        
+        # Check if tremor already generated for this (window_idx, body_part)
+        # Note: Tremor is now applied to raw signals at ORIGINAL_FS
+        cache_key = (window_idx, body_part)
+        if cache_key not in _TREMOR_CACHE:
+            L = win.shape[0]
+            _TREMOR_CACHE[cache_key] = generate_tremor_for_window(window_idx, body_part, L, ORIGINAL_FS)
+        
+        # Get appropriate noise based on sensor type
+        tremor_data = _TREMOR_CACHE[cache_key]
+        if sensor_type == 'Acc':
+            noise = tremor_data['acc_noise']
+        elif sensor_type == 'Gyro':
+            noise = tremor_data['gyro_noise']
+        elif sensor_type == 'Mag':
+            noise = tremor_data['mag_noise']
+        else:
+            # ECG or other sensors: no tremor applied
+            return win
+        
+        # Ensure noise shape matches window shape
+        if noise.shape != win.shape:
+            raise ValueError(f"Tremor noise shape {noise.shape} doesn't match window {win.shape}")
+        
+        return win + noise
     else:
         raise ValueError(f"Unknown noise type: {noise_type}")
 
@@ -338,11 +455,17 @@ def main():
     if SCENARIO_NOISE_TYPE is not None:
         print(f"Scenario Noise: {SCENARIO_NOISE_TYPE}")
         if SCENARIO_NOISE_TYPE == "AWGN":
-            print(f"  - AWGN sigma: {AWGN_SIGMA}")
+            print(f"  - AWGN RMS ratio: {AWGN_RMS_RATIO}")
         elif SCENARIO_NOISE_TYPE == "DROPOUT":
             print(f"  - Dropout value: {DROPOUT_VALUE}")
         elif SCENARIO_NOISE_TYPE == "WEAK_SIGNAL":
             print(f"  - Weak signal factor: {WEAK_SIGNAL_FACTOR}")
+        elif SCENARIO_NOISE_TYPE == "TREMOR":
+            print(f"  - Tremor mu: {TREMOR_MU}, sigma: {TREMOR_SIGMA}")
+            print(f"  - Tremor RMS - Acc: {TREMOR_ACC_RMS}, Gyro: {TREMOR_GYRO_RMS}, Mag: {TREMOR_MAG_RMS}")
+            print(f"  - Intermittent: {TREMOR_INTERMITTENT}")
+            if TREMOR_INTERMITTENT:
+                print(f"  - On prob: {TREMOR_ON_PROB}, duration: {TREMOR_MIN_ON_SEC}-{TREMOR_MAX_ON_SEC}s")
         print(f"  - All sensors corrupted in all windows")
         print(f"  - Scenario SEED: {NOISE_SCENARIO_SEED}")
     else:
@@ -451,18 +574,19 @@ def main():
                 subj_cache[subj_idx] = load_subject_data_with_retry(file_path)
 
             data = subj_cache[subj_idx]
-            win = data[win_start:win_end, cols]  # (L_original, C)
+            win = data[win_start:win_end, cols]  # (L_original, C) - raw signal
+
+            # Apply scenario noise to RAW signal (BEFORE preprocessing)
+            # This simulates hardware-level corruption (e.g., sensor measurement noise)
+            corrupted_sensors = corruption_log[w_idx]["corrupted_sensors"]
+            if sensor_name in corrupted_sensors:
+                win = apply_scenario_noise(win, SCENARIO_NOISE_TYPE, w_idx, sensor_name)
 
             # Resample (if needed)
             win = resample_window(win, ORIGINAL_FS, FS)  # (L_target, C)
 
             # Normalize
             win = zscore_window(win)
-
-            # Apply scenario noise if this sensor is corrupted for this window
-            corrupted_sensors = corruption_log[w_idx]["corrupted_sensors"]
-            if sensor_name in corrupted_sensors:
-                win = apply_scenario_noise(win, SCENARIO_NOISE_TYPE, w_idx, sensor_name)
 
             # Apply augmentation (creates AUG_SIZE copies)
             for a in range(AUG_SIZE):
@@ -532,11 +656,19 @@ def main():
             f"  - Type: {SCENARIO_NOISE_TYPE}",
         ])
         if SCENARIO_NOISE_TYPE == "AWGN":
-            info_lines.append(f"  - AWGN sigma: {AWGN_SIGMA}")
+            info_lines.append(f"  - AWGN RMS ratio: {AWGN_RMS_RATIO}")
         elif SCENARIO_NOISE_TYPE == "DROPOUT":
             info_lines.append(f"  - Dropout value: {DROPOUT_VALUE}")
         elif SCENARIO_NOISE_TYPE == "WEAK_SIGNAL":
             info_lines.append(f"  - Weak signal factor: {WEAK_SIGNAL_FACTOR}")
+        elif SCENARIO_NOISE_TYPE == "TREMOR":
+            info_lines.extend([
+                f"  - Tremor mu: {TREMOR_MU}, sigma: {TREMOR_SIGMA}, dt: {TREMOR_DT}",
+                f"  - Tremor RMS - Acc: {TREMOR_ACC_RMS}, Gyro: {TREMOR_GYRO_RMS}, Mag: {TREMOR_MAG_RMS}",
+                f"  - Intermittent: {TREMOR_INTERMITTENT}",
+            ])
+            if TREMOR_INTERMITTENT:
+                info_lines.append(f"  - On prob: {TREMOR_ON_PROB}, duration: {TREMOR_MIN_ON_SEC}-{TREMOR_MAX_ON_SEC}s")
         info_lines.extend([
             f"  - All sensors corrupted in all windows",
             f"  - Scenario seed: {NOISE_SCENARIO_SEED}",
@@ -564,6 +696,28 @@ def main():
     
     info_txt.write_text("\n".join(info_lines), encoding="utf-8")
     print(f"\nWrote variant {info_txt.name}")
+    
+    # -------------------------------
+    # Step 4b: Write tremor_params.txt if TREMOR noise
+    # -------------------------------
+    if SCENARIO_NOISE_TYPE == "TREMOR":
+        from Noise_simulation.Tremor import write_tremor_params_file
+        tremor_params_txt = variant_dir / "tremor_params.txt"
+        write_tremor_params_file(
+            tremor_params_txt,
+            mu=TREMOR_MU,
+            sigma=TREMOR_SIGMA,
+            dt=TREMOR_DT,
+            acc_rms=TREMOR_ACC_RMS,
+            gyro_rms=TREMOR_GYRO_RMS,
+            mag_rms=TREMOR_MAG_RMS,
+            intermittent=TREMOR_INTERMITTENT,
+            on_prob=TREMOR_ON_PROB,
+            min_on_sec=TREMOR_MIN_ON_SEC,
+            max_on_sec=TREMOR_MAX_ON_SEC,
+            scenario_seed=NOISE_SCENARIO_SEED,
+        )
+        print(f"Wrote tremor parameters: {tremor_params_txt.name}")
     
     # -------------------------------
     # Step 5: Write base_info.txt in parent directory (shared info)

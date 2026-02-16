@@ -104,11 +104,11 @@ class IMUCNN(nn.Module):
             nn.Conv1d(128, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(),
-            #nn.MaxPool1d(2),
+            nn.MaxPool1d(2),
             nn.Dropout(0.3),
         )
 
-        self.flattened_dim = (seq_len // 2) * 128 # 1536 numbers per sample
+        self.flattened_dim = (seq_len // 4) * 128 # 1536 numbers per sample
 
         # Embedding head (128-dim)
         self.flatten = nn.Flatten()

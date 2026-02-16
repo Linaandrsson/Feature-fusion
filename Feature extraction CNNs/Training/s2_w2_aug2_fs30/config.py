@@ -10,14 +10,14 @@ workspace_root = script_dir.parent.parent.parent  # Go up to workspace root (Tra
 
 # ========================= CHANGE THESE ===========================
 # Dataset configuration name (stride_window_augmentation)
-dataset_config = "s1_w1_aug2"
+dataset_config = "s2_w2_aug2"
 
 # CHANGE THIS TO RIGHT CLEAN FOLDER 
-variant_name = "fs50_clean" 
+variant_name = "fs30_clean" 
 
 # CHANGE THIS TO RIGHT SEQ LEN 
-sampling_rate = 50                # Must match data FS!
-window_sec = 1.0                  # Must match data window length in seconds!
+sampling_rate = 30                # Must match data FS!
+window_sec = 2.0                  # Must match data window length in seconds!
 seq_len = int(sampling_rate * window_sec)
 # ====================================================================
 

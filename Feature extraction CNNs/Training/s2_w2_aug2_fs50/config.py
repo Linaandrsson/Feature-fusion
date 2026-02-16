@@ -10,15 +10,13 @@ workspace_root = script_dir.parent.parent.parent  # Go up to workspace root (Tra
 
 # ========================= CHANGE THESE ===========================
 # Dataset configuration name (stride_window_augmentation)
-dataset_config = "s1_w1_aug2"
+dataset_config = "s2_w2_aug2"
 
 # CHANGE THIS TO RIGHT CLEAN FOLDER 
 variant_name = "fs50_clean" 
 
 # CHANGE THIS TO RIGHT SEQ LEN 
-sampling_rate = 50                # Must match data FS!
-window_sec = 1.0                  # Must match data window length in seconds!
-seq_len = int(sampling_rate * window_sec)
+seq_len = 100 #fs*s
 # ====================================================================
 
 # Use dataset_config parameter to build paths
@@ -35,6 +33,6 @@ base_dir = str(variant_dir)
 # OUTPUT CONFIGURATION
 # ============================================================
 # Where to save trained models (inside Feature extraction CNNs folder)
-feature_extraction_root = script_dir.parent.parent  # Training/s1_w1_aug2_fs50 -> Training -> Feature extraction CNNs
+feature_extraction_root = script_dir.parent.parent  # Training/s2_w2_aug2_fs50 -> Training -> Feature extraction CNNs
 models_output_dir = feature_extraction_root / "Models" / dataset_config / variant_name
 models_output_dir.mkdir(parents=True, exist_ok=True)

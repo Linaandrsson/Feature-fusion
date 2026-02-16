@@ -62,7 +62,7 @@ dataset_config = "s1_w1_aug2"
 
 # Sensors to use and their sampling rates
 sensors = ["Acc_ankle", "Acc_arm", "Acc_chest"]  # List of sensor names to include
-sensor_fs = [30, 20, 30]  # FS for each sensor (fs10, fs20, fs30, fs50)
+sensor_fs = [20, 30, 20]  # FS for each sensor (fs10, fs20, fs30, fs50)
 
 assert len(sensors) == len(sensor_fs), "sensors and sensor_fs must have same length"
 
@@ -74,7 +74,15 @@ assert len(sensors) == len(sensor_fs), "sensors and sensor_fs must have same len
 
 # Realistic scenario: Daily patient monitoring with wearable sensors
 train_corruption_config = {
-    "AWGN_s0p3": 0.30,           # Ankle: Impact noise from walking, 20%
+    "AWGN_s0p3/Acc_ankle.npz": 0.30,           # Ankle: Impact noise from walking, 20%
+    "DROPOUT_drop": 0.10,          # Arm: Patient adjusts sensor, 10%
+    "WEAK_SIGNAL_w0p2": 0.15,      # Acc_chest
+    # Acc_chest: 100% clean (most stable placement, strapped to chest)
+}
+
+test_corruption_config = {
+    "TREMOR_mu1p0_s0p5/Acc_ankle.npz": 0.30, 
+    "TREMOR_mu1p0_s0p5/Acc_arm.npz": 0.30,
     "DROPOUT_drop": 0.10,          # Arm: Patient adjusts sensor, 10%
     "WEAK_SIGNAL_w0p2": 0.15,      # Acc_chest
     # Acc_chest: 100% clean (most stable placement, strapped to chest)
@@ -89,7 +97,9 @@ train_corruption_config = {
 #
 # Stress test: Simulate a "bad day" with multiple sensor issues
 test_corruption_config = {
-    "AWGN_s0p3/Acc_ankle": 0.40,           # Heavy impact noise, poor placement, 40%
+    # "TREMOR_mu1p0_s0p5/Acc_ankle.npz": 1, 
+    # "TREMOR_mu1p0_s0p5/Acc_arm.npz": 1,
+    "AWGN_s0p3/Acc_ankle": 0.20,           # Heavy impact noise, poor placement, 40%
     "DROPOUT_drop/Acc_arm": 0.30,          # Sensor loosened, frequent dropouts, 30%
     "AWGN_s0p3/Acc_chest": 0.15,           # Even chest sensor affected slightly, 15%
 }
@@ -107,7 +117,7 @@ min_delta = 1e-4
 # -------------------------------
 # Fusion model configuration
 # -------------------------------
-USE_GATING = False  # True = gated fusion, False = concat baseline
+USE_GATING = True  # True = gated fusion, False = concat baseline
 
 # Gating parameters (only used if USE_GATING=True)
 gate_type = "sigmoid"  # "sigmoid" or "softmax"
@@ -135,7 +145,7 @@ LOG_FILE = LOG_DIR / "fusion_v3_experiments.jsonl"
 CORRUPTION_LOG_FILE = LOG_DIR / "corruption_metadata.jsonl"
 
 # Enable detailed per-sample corruption logging (warning: can be large!)
-LOG_SAMPLE_CORRUPTION = True  # Set to True for full per-sample logs
+LOG_SAMPLE_CORRUPTION = False  # Set to True for full per-sample logs
 
 
 # ═══════════════════════════════════════════════════════════════
