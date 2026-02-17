@@ -1,0 +1,270 @@
+{
+  "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+  "metadata": {
+    "train_mode": "clean",
+    "test_mode": "clean",
+    "fusion_mode": "concat",
+    "dataset_config": "s1_w1_aug2",
+    "seed": 42,
+    "run_timestamp": "2026-02-16_16-24-06",
+    "total_combinations": 8
+  },
+  "statistics": {
+    "mean_test_accuracy": 0.9590241591662719,
+    "max_test_accuracy": 0.9682614874467077,
+    "min_test_accuracy": 0.9459971577451445,
+    "range": 0.022264329701563224
+  },
+  "best_combination": {
+    "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+    "fs_combo_hash": "f0b7185f",
+    "run_timestamp": "2026-02-16_16-24-06",
+    "sensors": [
+      "Acc_ankle",
+      "Mag_arm",
+      "Mag_ankle"
+    ],
+    "fs_map": {
+      "Acc_ankle": 30,
+      "Mag_arm": 30,
+      "Mag_ankle": 10
+    },
+    "train_mode": "clean",
+    "test_mode": "clean",
+    "fusion_mode": "concat",
+    "val_accuracy": 0.9706161137440759,
+    "val_loss": 0.09935421993099683,
+    "test_accuracy": 0.9682614874467077,
+    "gate_mean": null,
+    "gate_std": null,
+    "seed": 42,
+    "dataset_config": "s1_w1_aug2"
+  },
+  "worst_combination": {
+    "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+    "fs_combo_hash": "a1ba399e",
+    "run_timestamp": "2026-02-16_16-24-06",
+    "sensors": [
+      "Acc_ankle",
+      "Mag_arm",
+      "Mag_ankle"
+    ],
+    "fs_map": {
+      "Acc_ankle": 10,
+      "Mag_arm": 10,
+      "Mag_ankle": 10
+    },
+    "train_mode": "clean",
+    "test_mode": "clean",
+    "fusion_mode": "concat",
+    "val_accuracy": 0.9445497630331754,
+    "val_loss": 0.17821008959935175,
+    "test_accuracy": 0.9459971577451445,
+    "gate_mean": null,
+    "gate_std": null,
+    "seed": 42,
+    "dataset_config": "s1_w1_aug2"
+  },
+  "ranked_results": [
+    {
+      "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+      "fs_combo_hash": "f0b7185f",
+      "run_timestamp": "2026-02-16_16-24-06",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm",
+        "Mag_ankle"
+      ],
+      "fs_map": {
+        "Acc_ankle": 30,
+        "Mag_arm": 30,
+        "Mag_ankle": 10
+      },
+      "train_mode": "clean",
+      "test_mode": "clean",
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9706161137440759,
+      "val_loss": 0.09935421993099683,
+      "test_accuracy": 0.9682614874467077,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "dataset_config": "s1_w1_aug2"
+    },
+    {
+      "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+      "fs_combo_hash": "8c645a53",
+      "run_timestamp": "2026-02-16_16-24-06",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm",
+        "Mag_ankle"
+      ],
+      "fs_map": {
+        "Acc_ankle": 30,
+        "Mag_arm": 30,
+        "Mag_ankle": 30
+      },
+      "train_mode": "clean",
+      "test_mode": "clean",
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9777251184834124,
+      "val_loss": 0.08684627232958356,
+      "test_accuracy": 0.9677877783041212,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "dataset_config": "s1_w1_aug2"
+    },
+    {
+      "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+      "fs_combo_hash": "f97231e6",
+      "run_timestamp": "2026-02-16_16-24-06",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm",
+        "Mag_ankle"
+      ],
+      "fs_map": {
+        "Acc_ankle": 30,
+        "Mag_arm": 10,
+        "Mag_ankle": 30
+      },
+      "train_mode": "clean",
+      "test_mode": "clean",
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9672985781990522,
+      "val_loss": 0.11354770897689023,
+      "test_accuracy": 0.9621032685930838,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "dataset_config": "s1_w1_aug2"
+    },
+    {
+      "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+      "fs_combo_hash": "915e4e7b",
+      "run_timestamp": "2026-02-16_16-24-06",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm",
+        "Mag_ankle"
+      ],
+      "fs_map": {
+        "Acc_ankle": 10,
+        "Mag_arm": 30,
+        "Mag_ankle": 30
+      },
+      "train_mode": "clean",
+      "test_mode": "clean",
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9725118483412323,
+      "val_loss": 0.09438024050251567,
+      "test_accuracy": 0.961155850307911,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "dataset_config": "s1_w1_aug2"
+    },
+    {
+      "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+      "fs_combo_hash": "a933d651",
+      "run_timestamp": "2026-02-16_16-24-06",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm",
+        "Mag_ankle"
+      ],
+      "fs_map": {
+        "Acc_ankle": 10,
+        "Mag_arm": 30,
+        "Mag_ankle": 10
+      },
+      "train_mode": "clean",
+      "test_mode": "clean",
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9601895734597157,
+      "val_loss": 0.1258463346845166,
+      "test_accuracy": 0.9573661771672193,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "dataset_config": "s1_w1_aug2"
+    },
+    {
+      "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+      "fs_combo_hash": "02c030a3",
+      "run_timestamp": "2026-02-16_16-24-06",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm",
+        "Mag_ankle"
+      ],
+      "fs_map": {
+        "Acc_ankle": 10,
+        "Mag_arm": 10,
+        "Mag_ankle": 30
+      },
+      "train_mode": "clean",
+      "test_mode": "clean",
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9601895734597157,
+      "val_loss": 0.12732682822722394,
+      "test_accuracy": 0.9559450497394599,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "dataset_config": "s1_w1_aug2"
+    },
+    {
+      "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+      "fs_combo_hash": "ab3954e1",
+      "run_timestamp": "2026-02-16_16-24-06",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm",
+        "Mag_ankle"
+      ],
+      "fs_map": {
+        "Acc_ankle": 30,
+        "Mag_arm": 10,
+        "Mag_ankle": 10
+      },
+      "train_mode": "clean",
+      "test_mode": "clean",
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9601895734597157,
+      "val_loss": 0.12966900731997466,
+      "test_accuracy": 0.9535765040265277,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "dataset_config": "s1_w1_aug2"
+    },
+    {
+      "experiment_id": "fs_study_k3_fs10_30_16-24-06",
+      "fs_combo_hash": "a1ba399e",
+      "run_timestamp": "2026-02-16_16-24-06",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm",
+        "Mag_ankle"
+      ],
+      "fs_map": {
+        "Acc_ankle": 10,
+        "Mag_arm": 10,
+        "Mag_ankle": 10
+      },
+      "train_mode": "clean",
+      "test_mode": "clean",
+      "fusion_mode": "concat",
+      "val_accuracy": 0.9445497630331754,
+      "val_loss": 0.17821008959935175,
+      "test_accuracy": 0.9459971577451445,
+      "gate_mean": null,
+      "gate_std": null,
+      "seed": 42,
+      "dataset_config": "s1_w1_aug2"
+    }
+  ]
+}
