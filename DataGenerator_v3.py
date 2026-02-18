@@ -12,8 +12,8 @@ from Noise_simulation.Dropout import apply_dropout, DROPOUT_VALUE
 from Noise_simulation.WeakSignal import apply_weak_signal, WEAK_SIGNAL_FACTOR
 from Noise_simulation.Tremor import (
     simulate_and_add_tremor_imu,
+    precompute_tremor_cache_with_relative_rms,
     TREMOR_MU, TREMOR_SIGMA, TREMOR_DT,
-    TREMOR_ACC_RMS, TREMOR_GYRO_RMS, TREMOR_MAG_RMS,
     TREMOR_INTERMITTENT, TREMOR_ON_PROB, TREMOR_MIN_ON_SEC, TREMOR_MAX_ON_SEC
 )
 
@@ -56,10 +56,24 @@ SCENARIO_NOISE_TYPE = None # or None for clean dataset
 # DROPOUT_VALUE = 0.0           # Override default (0.0)  
 # WEAK_SIGNAL_FACTOR = 0.3      # Override default (0.2)
 
+# TREMOR: Relative RMS configuration (tremor scaled to window signal RMS)
+# Format: target_tremor_rms = ALPHA * window_rms (clipped to [MIN, MAX])
+TREMOR_ACC_ALPHA = 0.05       # 5% of window RMS
+TREMOR_GYRO_ALPHA = 0.05      # 5% of window RMS
+TREMOR_MAG_ALPHA = 0.02       # 2% of window RMS (magnetometers typically quieter)
+
+# Clipping ranges to avoid extreme cases (in raw signal units)
+TREMOR_ACC_RMS_MIN = 0.05     # Minimum tremor RMS for accelerometer
+TREMOR_ACC_RMS_MAX = 2.0      # Maximum tremor RMS for accelerometer
+TREMOR_GYRO_RMS_MIN = 0.03    # Minimum tremor RMS for gyroscope
+TREMOR_GYRO_RMS_MAX = 1.5     # Maximum tremor RMS for gyroscope
+TREMOR_MAG_RMS_MIN = 0.01     # Minimum tremor RMS for magnetometer
+TREMOR_MAG_RMS_MAX = 0.5      # Maximum tremor RMS for magnetometer
 
 # Note: When SCENARIO_NOISE_TYPE is set, ALL sensors receive noise in ALL windows
 #       For TREMOR: Always applies to all IMU sensors (Acc/Gyro/Mag on ankle/arm/chest)
 #       To get different tremor scenarios, change NOISE_SCENARIO_SEED above
+#       Tremor strength is now RELATIVE to window signal RMS (more realistic)
 
 # ============================================================
 # SENSOR COLUMN MAP (0-indexed)
@@ -286,63 +300,6 @@ def get_sensor_type(sensor_name: str) -> str:
     return sensor_name.split('_')[0]
 
 
-def generate_tremor_for_window(
-    window_idx: int,
-    body_part: str,
-    L: int,
-    fs: float
-) -> Dict[str, np.ndarray]:
-    """
-    Generate tremor for a specific window and body part.
-    Returns dict with 'acc_noise', 'gyro_noise', 'mag_noise' (each (L,3)) and 'meta'.
-    
-    This ensures Acc/Gyro/Mag share same tremor realization (same VdP process, direction, envelope)
-    but use different state variables: acc uses x1, gyro uses x2, mag uses x1.
-    """
-    # Create deterministic seed for this (window_idx, body_part)
-    body_part_offset = {'ankle': 0, 'arm': 1, 'chest': 2}.get(body_part, 0)
-    seed = (NOISE_SCENARIO_SEED + window_idx * 7919 + body_part_offset * 10000) & 0xffffffff
-    
-    # Create dummy signals (zeros) to apply tremor
-    X_acc_dummy = np.zeros((L, 3), dtype=np.float64)
-    X_gyro_dummy = np.zeros((L, 3), dtype=np.float64)
-    X_mag_dummy = np.zeros((L, 3), dtype=np.float64)
-    
-    # Generate tremor (this returns corrupted signals, but we want just the noise)
-    X_acc_t, X_gyro_t, X_mag_t, meta = simulate_and_add_tremor_imu(
-        X_acc_dummy,
-        X_gyro_dummy,
-        X_mag_dummy,
-        fs=fs,
-        mu=TREMOR_MU,
-        sigma=TREMOR_SIGMA,
-        dt=TREMOR_DT,
-        acc_rms=TREMOR_ACC_RMS,
-        gyro_rms=TREMOR_GYRO_RMS,
-        mag_rms=TREMOR_MAG_RMS,
-        use_acc_state="x1",
-        use_gyro_state="x2",
-        use_mag_state="x1",
-        intermittent=TREMOR_INTERMITTENT,
-        on_prob=TREMOR_ON_PROB,
-        min_on_sec=TREMOR_MIN_ON_SEC,
-        max_on_sec=TREMOR_MAX_ON_SEC,
-        seed=seed
-    )
-    
-    # Extract noise (difference from dummy)
-    acc_noise = X_acc_t - X_acc_dummy
-    gyro_noise = X_gyro_t - X_gyro_dummy
-    mag_noise = X_mag_t - X_mag_dummy
-    
-    return {
-        'acc_noise': acc_noise.astype(np.float32),
-        'gyro_noise': gyro_noise.astype(np.float32),
-        'mag_noise': mag_noise.astype(np.float32),
-        'meta': meta
-    }
-
-
 def apply_scenario_noise(
     win: np.ndarray,
     noise_type: str,
@@ -373,15 +330,15 @@ def apply_scenario_noise(
         return apply_weak_signal(win, WEAK_SIGNAL_FACTOR)
     elif noise_type == "TREMOR":
         # For tremor: ensure consistency across Acc/Gyro/Mag for same body part
+        # Cache is pre-populated in main() with window-relative RMS
         body_part = extract_body_part(sensor_name)
         sensor_type = get_sensor_type(sensor_name)
         
-        # Check if tremor already generated for this (window_idx, body_part)
-        # Note: Tremor is now applied to raw signals at ORIGINAL_FS
+        # Get tremor from pre-computed cache
         cache_key = (window_idx, body_part)
         if cache_key not in _TREMOR_CACHE:
-            L = win.shape[0]
-            _TREMOR_CACHE[cache_key] = generate_tremor_for_window(window_idx, body_part, L, ORIGINAL_FS)
+            raise RuntimeError(f"Tremor cache missing for {cache_key}. "
+                             "Ensure precompute_tremor_cache() was called before sensor processing.")
         
         # Get appropriate noise based on sensor type
         tremor_data = _TREMOR_CACHE[cache_key]
@@ -462,7 +419,11 @@ def main():
             print(f"  - Weak signal factor: {WEAK_SIGNAL_FACTOR}")
         elif SCENARIO_NOISE_TYPE == "TREMOR":
             print(f"  - Tremor mu: {TREMOR_MU}, sigma: {TREMOR_SIGMA}")
-            print(f"  - Tremor RMS - Acc: {TREMOR_ACC_RMS}, Gyro: {TREMOR_GYRO_RMS}, Mag: {TREMOR_MAG_RMS}")
+            print(f"  - Tremor alpha (relative RMS):")
+            print(f"      Acc: {TREMOR_ACC_ALPHA} (range: [{TREMOR_ACC_RMS_MIN}, {TREMOR_ACC_RMS_MAX}])")
+            print(f"      Gyro: {TREMOR_GYRO_ALPHA} (range: [{TREMOR_GYRO_RMS_MIN}, {TREMOR_GYRO_RMS_MAX}])")
+            print(f"      Mag: {TREMOR_MAG_ALPHA} (range: [{TREMOR_MAG_RMS_MIN}, {TREMOR_MAG_RMS_MAX}])")
+            print(f"  - Note: Target RMS = alpha * window_RMS (per window)")
             print(f"  - Intermittent: {TREMOR_INTERMITTENT}")
             if TREMOR_INTERMITTENT:
                 print(f"  - On prob: {TREMOR_ON_PROB}, duration: {TREMOR_MIN_ON_SEC}-{TREMOR_MAX_ON_SEC}s")
@@ -556,6 +517,42 @@ def main():
             json.dump(summary, f, indent=2)
         print(f"Saved corruption summary: {summary_path.name}")
         print(f"\nCorruption: ALL sensors in ALL windows (100%)")
+    
+    # -------------------------------
+    # Step 2.5: Pre-compute tremor cache (if using TREMOR)
+    # -------------------------------
+    if SCENARIO_NOISE_TYPE == "TREMOR":
+        # Call tremor pre-computation from Tremor.py module
+        def subject_data_loader(subj_idx: int) -> np.ndarray:
+            """Wrapper for loading subject data."""
+            file_path = DATA_PATH / f"mHealth_subject{subj_idx}.log"
+            return load_subject_data_with_retry(file_path)
+        
+        _TREMOR_CACHE.update(
+            precompute_tremor_cache_with_relative_rms(
+                window_specs=window_specs,
+                sensor_column_mapping=SENSORS,
+                data_loader_func=subject_data_loader,
+                fs=ORIGINAL_FS,
+                tremor_mu=TREMOR_MU,
+                tremor_sigma=TREMOR_SIGMA,
+                tremor_dt=TREMOR_DT,
+                tremor_acc_alpha=TREMOR_ACC_ALPHA,
+                tremor_gyro_alpha=TREMOR_GYRO_ALPHA,
+                tremor_mag_alpha=TREMOR_MAG_ALPHA,
+                tremor_acc_rms_min=TREMOR_ACC_RMS_MIN,
+                tremor_acc_rms_max=TREMOR_ACC_RMS_MAX,
+                tremor_gyro_rms_min=TREMOR_GYRO_RMS_MIN,
+                tremor_gyro_rms_max=TREMOR_GYRO_RMS_MAX,
+                tremor_mag_rms_min=TREMOR_MAG_RMS_MIN,
+                tremor_mag_rms_max=TREMOR_MAG_RMS_MAX,
+                tremor_intermittent=TREMOR_INTERMITTENT,
+                tremor_on_prob=TREMOR_ON_PROB,
+                tremor_min_on_sec=TREMOR_MIN_ON_SEC,
+                tremor_max_on_sec=TREMOR_MAX_ON_SEC,
+                scenario_seed=NOISE_SCENARIO_SEED,
+            )
+        )
     
     # -------------------------------
     # Step 3: Process each sensor
@@ -664,7 +661,11 @@ def main():
         elif SCENARIO_NOISE_TYPE == "TREMOR":
             info_lines.extend([
                 f"  - Tremor mu: {TREMOR_MU}, sigma: {TREMOR_SIGMA}, dt: {TREMOR_DT}",
-                f"  - Tremor RMS - Acc: {TREMOR_ACC_RMS}, Gyro: {TREMOR_GYRO_RMS}, Mag: {TREMOR_MAG_RMS}",
+                f"  - Tremor alpha (relative RMS):",
+                f"      Acc: {TREMOR_ACC_ALPHA} (clipped to [{TREMOR_ACC_RMS_MIN}, {TREMOR_ACC_RMS_MAX}])",
+                f"      Gyro: {TREMOR_GYRO_ALPHA} (clipped to [{TREMOR_GYRO_RMS_MIN}, {TREMOR_GYRO_RMS_MAX}])",
+                f"      Mag: {TREMOR_MAG_ALPHA} (clipped to [{TREMOR_MAG_RMS_MIN}, {TREMOR_MAG_RMS_MAX}])",
+                f"  - Note: Tremor RMS = alpha * window_signal_RMS (per window, per sensor)",
                 f"  - Intermittent: {TREMOR_INTERMITTENT}",
             ])
             if TREMOR_INTERMITTENT:
@@ -708,9 +709,15 @@ def main():
             mu=TREMOR_MU,
             sigma=TREMOR_SIGMA,
             dt=TREMOR_DT,
-            acc_rms=TREMOR_ACC_RMS,
-            gyro_rms=TREMOR_GYRO_RMS,
-            mag_rms=TREMOR_MAG_RMS,
+            acc_alpha=TREMOR_ACC_ALPHA,
+            gyro_alpha=TREMOR_GYRO_ALPHA,
+            mag_alpha=TREMOR_MAG_ALPHA,
+            acc_rms_min=TREMOR_ACC_RMS_MIN,
+            acc_rms_max=TREMOR_ACC_RMS_MAX,
+            gyro_rms_min=TREMOR_GYRO_RMS_MIN,
+            gyro_rms_max=TREMOR_GYRO_RMS_MAX,
+            mag_rms_min=TREMOR_MAG_RMS_MIN,
+            mag_rms_max=TREMOR_MAG_RMS_MAX,
             intermittent=TREMOR_INTERMITTENT,
             on_prob=TREMOR_ON_PROB,
             min_on_sec=TREMOR_MIN_ON_SEC,
