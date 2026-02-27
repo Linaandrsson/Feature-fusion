@@ -27,12 +27,15 @@ from collections import defaultdict
 import json
 import os
 import random
+import time
+from datetime import datetime
 
 
 # -------------------------------
-# Reproducibility
+# Reproducibility - Random seed for each run
 # -------------------------------
-SEED = 42
+SEED = int(time.time() * 1000) % 100000  # Random seed based on timestamp
+print(f"Using random seed: {SEED}")
 
 random.seed(SEED)
 np.random.seed(SEED)
@@ -308,6 +311,15 @@ optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
 print("\nFusion mode:", "GATED" if USE_GATING else "CONCAT")
 print(model)
 
+# Count parameters
+total_params = sum(p.numel() for p in model.parameters())
+trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"\nTotal parameters: {total_params:,}")
+print(f"Trainable parameters: {trainable_params:,}")
+
+# Get model architecture as string for logging
+model_architecture = str(model)
+
 # -------------------------------
 # Training + Early stopping
 # -------------------------------
@@ -512,11 +524,29 @@ if best_acc_file.exists():
 else:
     best_accs = {}
 
-previous_best = float(best_accs.get(model_key, 0.0))
+# Handle old format (just accuracy) vs new format (dict with accuracy and architecture)
+if model_key in best_accs:
+    if isinstance(best_accs[model_key], dict):
+        previous_best = best_accs[model_key].get("accuracy", 0.0)
+    else:
+        # Old format: just a number
+        previous_best = best_accs[model_key]
+else:
+    previous_best = 0.0
+
 print(f"Previous Best: {previous_best:.4f}")
 
 if test_acc > previous_best:
-    best_accs[model_key] = float(test_acc)
+    # Update best accuracies file with accuracy AND architecture
+    best_accs[model_key] = {
+        "accuracy": float(test_acc),
+        "architecture": model_architecture,
+        "total_params": total_params,
+        "trainable_params": trainable_params,
+        "fusion_mode": "gated" if USE_GATING else "concat",
+        "random_seed": SEED,
+        "timestamp": datetime.now().isoformat()
+    }
     with open(best_acc_file, "w") as f:
         json.dump(best_accs, f, indent=2, sort_keys=True)
     print("✅ New best accuracy saved.")

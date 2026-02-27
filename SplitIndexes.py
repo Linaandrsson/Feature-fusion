@@ -5,11 +5,10 @@ from pathlib import Path
 # ============================================================
 # CONFIGURATION
 # ============================================================
-# Specify the PARENT directory (base configuration)
-# The script will look for a variant subdirectory to read data from,
-# and save splits.npz to the parent directory (shared across all variants)
-
-PARENT_DIR = "/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code/data/Datagenerator_files/s2_w2_aug2"
+# Automatically use relative path from script location
+# This will work regardless of where the folder is located
+script_dir = Path(__file__).parent.resolve()
+PARENT_DIR = script_dir / "data" / "Datagenerator_files" / "s2_w2_aug2"
 
 # Optionally specify which variant to use for reading sample info
 # If None, will use the first variant found

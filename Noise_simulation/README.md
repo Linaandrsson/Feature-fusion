@@ -88,23 +88,80 @@ weak_signal = apply_weak_signal(signal, factor=0.2)  # 20% strength
 ### 4. Tremor.py - Physiological Tremor Simulation
 Simulates realistic tremor using stochastic van der Pol oscillator.
 
+#### NEW: Parkinson Patient Model (v2.0)
+**Recommended for realistic clinical simulation!**
+
+The new Parkinson model generates subject-specific, anatomically-aware, and activity-modulated tremor:
+
+**Formula:**
+```
+RMS = A_subject[subject_id][sensor] * C[body_part] * beta[activity] * (1 + jitter)
+```
+
+Where:
+- **A_subject**: Baseline tremor severity per patient (mild/moderate/severe)
+- **C**: Body part sensitivity (arm > ankle > chest)
+- **beta**: Activity modulation (high at rest, reduced during movement)
+- **jitter**: Optional window-to-window variability (~15%)
+
+**Configuration:** All parameters defined in `tremor_parkinson_config.py`:
+- 10 subjects with varying severity (mild, moderate, severe)
+- Body part scaling: arm (1.5x), ankle (0.8x), chest (0.6x)
+- Activity modulation: sitting (1.5x), walking (0.9x), running (0.5x)
+
 **Functions:**
-- `simulate_stochastic_vdp_states()` - Generate tremor states
-- `resample_to_fs()` - Resample to sensor frequency
-- `simulate_and_add_tremor_imu()` - Complete tremor simulation for IMU
+- `precompute_tremor_cache_with_parkinson_model()` - Pre-compute tremor for all windows (NEW!)
+- `write_tremor_parkinson_params_file()` - Document parameters
+- `simulate_and_add_tremor_imu()` - Low-level tremor generation (legacy)
+- `precompute_tremor_cache_with_relative_rms()` - Old relative RMS method (deprecated)
+
+**Example (Parkinson model - RECOMMENDED):**
+```python
+from Noise_simulation.Tremor import precompute_tremor_cache_with_parkinson_model
+
+# Pre-compute tremor for all windows
+# window_specs: [(subject_id, activity_label, win_start, win_end), ...]
+tremor_cache = precompute_tremor_cache_with_parkinson_model(
+    window_specs=window_specs,
+    sensor_column_mapping=sensor_cols,
+    data_loader_func=load_subject_data,
+    fs=50.0,
+    scenario_seed=42,
+    use_jitter=True  # Add natural variability
+)
+
+# Apply cached tremor to a specific window and body part
+noise_data = tremor_cache[(window_idx, 'arm')]
+acc_corrupted = acc_clean + noise_data['acc_noise']
+gyro_corrupted = gyro_clean + noise_data['gyro_noise']
+mag_corrupted = mag_clean + noise_data['mag_noise']
+```
+
+**Clinical realism features:**
+- ✅ Subject-specific severity (e.g., Subject 1: mild, Subject 10: severe)
+- ✅ Upper limbs more affected than lower limbs
+- ✅ Prominent resting tremor (sitting, standing)
+- ✅ Reduced tremor during active movement (running, jumping)
+- ✅ Natural window-to-window variability
+- ✅ Physiologically realistic 4-6 Hz oscillation
+
+**To customize subjects:**
+Edit `tremor_parkinson_config.py` and modify:
+- `A_SUBJECT`: Add/modify subject tremor severities
+- `C_BODY_PART`: Adjust body part sensitivity
+- `BETA_ACTIVITY`: Modify activity-dependent modulation
 
 **Use cases:**
-- Parkinsonian tremor (4-6 Hz)
-- Essential tremor (6-12 Hz)
-- Physiological tremor
-- Movement artifacts
-- Hand tremor effects on wearable sensors
+- Parkinsonian tremor (4-6 Hz) - **PRIMARY USE CASE**
+- Essential tremor (6-12 Hz) - adjust mu parameter
+- Movement artifacts in clinical populations
+- Testing robustness to patient-specific variability
 
-**Example:**
+**Legacy Example (low-level, manual RMS):**
 ```python
 from Noise_simulation.Tremor import simulate_and_add_tremor_imu
 
-# Simulate tremor on IMU data
+# Simulate tremor on IMU data (manual RMS control)
 X_acc_t, X_gyro_t, X_mag_t, meta = simulate_and_add_tremor_imu(
     X_acc=clean_acc,
     X_gyro=clean_gyro, 
@@ -186,8 +243,8 @@ All noise functions expect:
 
 Each module includes example usage in docstrings. To test:
 
+### Test AWGN
 ```python
-# Test AWGN
 from Noise_simulation.AWGN import apply_awgn
 import numpy as np
 
@@ -196,6 +253,18 @@ signal = np.random.randn(100, 3)
 noisy = apply_awgn(signal, sigma=0.3, rng=rng)
 print(f"Signal shape: {signal.shape}, Noisy shape: {noisy.shape}")
 print(f"SNR: {np.var(signal) / np.var(noisy - signal):.2f}")
+```
+
+### Test Parkinson Tremor Configuration
+```python
+# Run configuration validation
+python tremor_parkinson_config.py
+
+# This will output:
+# - Subject severity summaries (mild/moderate/severe)
+# - RMS calculation examples for different activities
+# - Reproducibility test with seeds
+# - Activity modulation demonstration
 ```
 
 ## References

@@ -1,5 +1,11 @@
 import numpy as np
 
+# Import tremor_parkinson_config - handle both package and script mode
+try:
+    from . import tremor_parkinson_config as pk_config
+except ImportError:
+    import tremor_parkinson_config as pk_config
+
 # Default parameters for Tremor noise
 # Van der Pol oscillator parameters
 TREMOR_MU = 1.0                  # van der Pol nonlinearity parameter
@@ -27,14 +33,36 @@ def simulate_stochastic_vdp_states(
     dt: float = 0.001,
     mu: float = 1.0,
     sigma: float = 0.5,
+    omega: float = None,  # angular frequency (rad/s). If None, uses 2*pi*5.0 (5 Hz default)
     x1_0: float = 0.0,
     x2_0: float = 1.0,
     seed: int | None = None,
 ):
     """
     Simulate stochastic van der Pol oscillator (Euler–Maruyama).
-    Returns: t (n_steps,), x1 (n_steps,), x2 (n_steps,)
+    
+    The van der Pol equations with frequency control:
+        dx1/dt = omega * x2
+        dx2/dt = omega * (mu * (1 - x1^2) * x2 - x1) + sigma * dW/dt
+    
+    Args:
+        T_sec: Duration in seconds
+        dt: Integration time step
+        mu: Van der Pol nonlinearity parameter (controls limit cycle amplitude)
+        sigma: Stochastic noise intensity
+        omega: Angular frequency (rad/s). If None, defaults to 2*pi*5.0 (5 Hz).
+               To use a specific frequency f (Hz), set omega = 2*pi*f
+        x1_0, x2_0: Initial conditions
+        seed: Random seed for reproducibility
+    
+    Returns: 
+        t (n_steps,): Time vector
+        x1 (n_steps,): Position state
+        x2 (n_steps,): Velocity state
     """
+    if omega is None:
+        omega = 2.0 * np.pi * 5.0  # Default to 5 Hz
+    
     rng = np.random.default_rng(seed)
     n_steps = int(np.ceil(T_sec / dt))
     t = np.arange(n_steps, dtype=np.float64) * dt
@@ -44,8 +72,8 @@ def simulate_stochastic_vdp_states(
     x1[0], x2[0] = x1_0, x2_0
 
     for k in range(n_steps - 1):
-        dx1 = x2[k]
-        dx2 = mu * (1.0 - x1[k] ** 2) * x2[k] - x1[k]
+        dx1 = omega * x2[k]
+        dx2 = omega * (mu * (1.0 - x1[k] ** 2) * x2[k] - x1[k])
         x1[k + 1] = x1[k] + dt * dx1
         x2[k + 1] = x2[k] + dt * dx2 + sigma * np.sqrt(dt) * rng.standard_normal()
 
@@ -118,6 +146,7 @@ def simulate_and_add_tremor_imu(
     mu: float = 1.0,
     sigma: float = 0.5,
     dt: float = 0.001,
+    freq_hz: float = 5.0,  # NEW: Tremor frequency in Hz (default 5 Hz)
     # Tremor strengths (RMS) in the SAME units as each sensor stream
     acc_rms: float = 0.2,
     gyro_rms: float = 0.2,
@@ -135,12 +164,16 @@ def simulate_and_add_tremor_imu(
 ):
     """
     End-to-end:
-    1) simulate stochastic VdP -> x1(t), x2(t)
+    1) simulate stochastic VdP -> x1(t), x2(t) with specified frequency
     2) resample to fs
     3) build s_acc, s_gyro, s_mag from x1/x2
     4) optional intermittent envelope
     5) project along 3D unit direction v (same for all modalities)
     6) return corrupted signals + (s's, v, env) for logging/debug
+    
+    Args:
+        freq_hz: Tremor frequency in Hz (e.g., 4.5 for 4.5 Hz Parkinson tremor)
+                 Range typically 3.5-7.0 Hz for Parkinson's disease
     """
     assert X_acc.shape == X_gyro.shape == X_mag.shape, "acc/gyro/mag must have same shape (N,3)"
     assert X_acc.shape[1] == 3, "expected (N,3) per sensor stream"
@@ -149,8 +182,13 @@ def simulate_and_add_tremor_imu(
     N = X_acc.shape[0]
     T_sec = N / fs
 
-    # 1) simulate states on fine dt grid
-    t, x1, x2 = simulate_stochastic_vdp_states(T_sec=T_sec, dt=dt, mu=mu, sigma=sigma, seed=seed)
+    # Convert frequency to angular frequency
+    omega = 2.0 * np.pi * freq_hz
+
+    # 1) simulate states on fine dt grid with specified frequency
+    t, x1, x2 = simulate_stochastic_vdp_states(
+        T_sec=T_sec, dt=dt, mu=mu, sigma=sigma, omega=omega, seed=seed
+    )
 
     # 2) resample to sensor fs
     x1_s = resample_to_fs(t, x1, fs=fs, T_sec=T_sec)
@@ -194,6 +232,8 @@ def simulate_and_add_tremor_imu(
         "mu": mu,
         "sigma": sigma,
         "dt": dt,
+        "freq_hz": freq_hz,  # NEW: Store frequency for labeling
+        "omega": omega,
     }
     
     return X_acc_t, X_gyro_t, X_mag_t, meta
@@ -257,9 +297,10 @@ def write_tremor_params_file(
         "",
         "=" * 60,
         "Technical Details:",
-        f"  - Van der Pol mu: {mu} (controls oscillation frequency)",
+        f"  - Van der Pol mu: {mu} (controls nonlinearity / limit-cycle dynamics)",
         f"  - Stochastic sigma: {sigma} (controls irregularity)",
         f"  - Integration dt: {dt} s",
+        f"  - Frequency: set per window by relative RMS mode (natural ~4-6 Hz)",
         f"  - Accelerometer uses state x1(t)",
         f"  - Gyroscope uses state x2(t) (90° phase shift)",
         f"  - Magnetometer uses state x1(t)",
@@ -309,6 +350,11 @@ def precompute_tremor_cache_with_relative_rms(
     tremor_max_on_sec: float,
     scenario_seed: int,
 ):
+    """
+    NOTE: This is the LEGACY relative RMS version. Consider using
+    precompute_tremor_cache_with_parkinson_model() for more realistic
+    subject-specific, body-part-aware, and activity-modulated tremor.
+    """
     """
     Pre-compute tremor noise for all windows using RELATIVE RMS from actual signals.
     
@@ -445,3 +491,436 @@ def precompute_tremor_cache_with_relative_rms(
     print(f"{'='*80}\n")
     
     return tremor_cache
+
+
+def precompute_tremor_cache_with_parkinson_model(
+    window_specs,
+    sensor_column_mapping,
+    data_loader_func,
+    fs: float,
+    tremor_mu: float = 1.0,
+    tremor_sigma: float = 0.5,
+    tremor_dt: float = 0.001,
+    tremor_intermittent: bool = False,
+    tremor_on_prob: float = 0.5,
+    tremor_min_on_sec: float = 2.0,
+    tremor_max_on_sec: float = 8.0,
+    scenario_seed: int = 42,
+    use_jitter: bool = True,
+    jitter_std: float | None = None,
+    sampling_method: str | None = None,
+    augment_mode: str = "mild_mod",
+):
+    """
+    Pre-compute tremor noise for all windows using PARKINSON PATIENT MODEL.
+    
+    This function supports two sampling methods:
+    
+    1. "subject" (default): Subject-specific parameters
+       - Subject-specific baseline tremor severity (A_subject) - accelerometer RMS
+       - Subject-specific tremor frequency (FREQ_TREMOR)
+       - Severity-dependent k_g factor for gyroscope RMS calculation
+       - Body part sensitivity (C: arm > ankle > chest)
+       - Activity-dependent modulation (beta: high at rest, reduced during movement)
+       - Optional window-to-window jitter for natural variability
+       
+       The tremor RMS for each window is calculated as:
+           RMS_acc = A_subject[subject_id] * C[body_part] * beta[activity] * (1 + jitter)
+           RMS_gyro = k_g(RMS_acc) * RMS_acc
+           Freq = FREQ_TREMOR[subject_id]
+    
+    2. "interval": Per-window sampling from severity ranges
+       - Samples tremor parameters independently for each window
+       - RMS sampled from severity intervals (SCORE_RMS_RANGE)
+       - Frequency sampled randomly from range (FREQ_RANGE_HZ)
+       - More variability, suited for augmentation studies
+       
+       The tremor RMS for each window is sampled as:
+           score = random choice based on augment_mode
+           RMS_acc ~ Uniform(SCORE_RMS_RANGE[score]) * (1 + variation)
+           RMS_gyro = k_g(RMS_acc) * RMS_acc
+           Freq ~ Uniform(FREQ_RANGE_HZ)
+    
+    Args:
+        window_specs: List of tuples (subj_idx, label, win_start, win_end)
+                     where subj_idx is 1-indexed subject ID
+        sensor_column_mapping: Dict mapping sensor names to column indices
+                              e.g., {"Acc_ankle": [5,6,7], "Gyro_ankle": [8,9,10], ...}
+        data_loader_func: Function that takes subject_idx and returns full data array
+        fs: Sampling frequency
+        tremor_mu: Van der Pol mu parameter (controls oscillation)
+        tremor_sigma: Stochastic noise sigma (controls irregularity)
+        tremor_dt: Integration time step
+        tremor_intermittent: Whether to use intermittent tremor envelope
+        tremor_on_prob: Probability of tremor being on (if intermittent)
+        tremor_min_on_sec: Minimum on duration (if intermittent)
+        tremor_max_on_sec: Maximum on duration (if intermittent)
+        scenario_seed: Random seed for deterministic tremor generation
+        use_jitter: Whether to add window-to-window variability
+        jitter_std: Jitter standard deviation (default from pk_config.JITTER_STD)
+        sampling_method: "subject" (subject-based) or "interval" (per-window sampling)
+                        None uses pk_config.DEFAULT_SAMPLING_METHOD
+        augment_mode: For interval method: "clean", "mild_mod", or "mod_severe"
+                      Ignored for subject method
+        
+    Returns:
+        tremor_cache: Dict with keys (window_idx, body_part) containing
+                     'acc_noise', 'gyro_noise', 'mag_noise' arrays and 'meta' dict
+                     
+    Example (subject method):
+        >>> tremor_cache = precompute_tremor_cache_with_parkinson_model(
+        ...     window_specs=[(1, 2, 0, 500), (1, 4, 500, 1000)],  # subj 1, activities 2 & 4
+        ...     sensor_column_mapping=sensor_cols,
+        ...     data_loader_func=load_subject_data,
+        ...     fs=50.0,
+        ...     sampling_method="subject",
+        ...     scenario_seed=42
+        ... )
+        
+    Example (interval method):
+        >>> tremor_cache = precompute_tremor_cache_with_parkinson_model(
+        ...     window_specs=[(1, 2, 0, 500), (1, 4, 500, 1000)],
+        ...     sensor_column_mapping=sensor_cols,
+        ...     data_loader_func=load_subject_data,
+        ...     fs=50.0,
+        ...     sampling_method="interval",
+        ...     augment_mode="mild_mod",
+        ...     scenario_seed=42
+        ... )
+    """
+    # Set defaults
+    if jitter_std is None:
+        jitter_std = pk_config.JITTER_STD
+    
+    if sampling_method is None:
+        sampling_method = pk_config.DEFAULT_SAMPLING_METHOD
+    
+    # Validate sampling method
+    if sampling_method not in ["subject", "interval"]:
+        raise ValueError(f"sampling_method must be 'subject' or 'interval', got '{sampling_method}'")
+    
+    print(f"\n{'='*80}")
+    print(f"Pre-computing tremor cache with PARKINSON MODEL")
+    print(f"{'='*80}")
+    print(f"Sampling method: {sampling_method.upper()}")
+    
+    if sampling_method == "subject":
+        print(f"Model: RMS_acc = A_subject[subj] * C[body_part] * beta[activity] * (1 + jitter)")
+        print(f"       RMS_gyro = k_g(RMS_acc) * RMS_acc, RMS_mag = 0.0")
+        print(f"       Frequency = FREQ_TREMOR[subject_id]")
+    else:  # interval
+        print(f"Model: Sample parameters per window from severity ranges")
+        print(f"       score ~ choice based on augment_mode='{augment_mode}'")
+        print(f"       RMS_acc ~ Uniform(SCORE_RMS_RANGE[score]) * (1 + variation)")
+        print(f"       RMS_gyro = k_g(RMS_acc) * RMS_acc")
+        print(f"       Frequency ~ Uniform({pk_config.FREQ_RANGE_HZ[0]}-{pk_config.FREQ_RANGE_HZ[1]} Hz)")
+    
+    print(f"Parameters:")
+    if sampling_method == "subject":
+        print(f"  - Subjects with tremor severity defined: {list(pk_config.A_SUBJECT.keys())}")
+        print(f"  - Tremor frequencies: {pk_config.FREQ_TREMOR}")
+        print(f"  - Body part scaling: {pk_config.C_BODY_PART}")
+    else:  # interval
+        print(f"  - Augment mode: {augment_mode}")
+        print(f"  - RMS ranges: {pk_config.SCORE_RMS_RANGE}")
+        print(f"  - Frequency range: {pk_config.FREQ_RANGE_HZ} Hz")
+    print(f"  - Jitter: {'enabled' if use_jitter else 'disabled'} (std={jitter_std:.3f})")
+    print(f"  - Scenario seed: {scenario_seed}")
+    
+    tremor_cache = {}
+    subj_cache = {}
+    
+    # Create RNG for jitter and interval sampling
+    jitter_rng = np.random.default_rng(scenario_seed + 99999)
+    interval_rng = np.random.default_rng(scenario_seed + 88888) if sampling_method == "interval" else None
+    
+    # Group windows by body part
+    body_parts_to_process = {}
+    for w_idx, (subj_idx, label, win_start, win_end) in enumerate(window_specs):
+        # Each window needs tremor for ankle, arm, chest
+        for body_part in ['ankle', 'arm', 'chest']:
+            cache_key = (w_idx, body_part)
+            if cache_key not in body_parts_to_process:
+                body_parts_to_process[cache_key] = (subj_idx, label, win_start, win_end)
+    
+    print(f"Processing {len(body_parts_to_process)} unique (window, body_part) combinations...")
+    
+    # Process each (window_idx, body_part)
+    for (w_idx, body_part), (subj_idx, label, win_start, win_end) in body_parts_to_process.items():
+        
+        # Load subject data if not cached
+        if subj_idx not in subj_cache:
+            subj_cache[subj_idx] = data_loader_func(subj_idx)
+        
+        data = subj_cache[subj_idx]
+        
+        # ========================================
+        # Calculate tremor parameters based on sampling method
+        # ========================================
+        if sampling_method == "subject":
+            # Subject-based method: use subject-specific parameters
+            # Check if subject has Parkinson parameters defined
+            if subj_idx not in pk_config.A_SUBJECT:
+                print(f"Warning: Subject {subj_idx} not in Parkinson config. Skipping tremor for this subject.")
+                # Store zero tremor
+                L = win_end - win_start
+                tremor_cache[(w_idx, body_part)] = {
+                    'acc_noise': np.zeros((L, 3), dtype=np.float32),
+                    'gyro_noise': np.zeros((L, 3), dtype=np.float32),
+                    'mag_noise': np.zeros((L, 3), dtype=np.float32),
+                    'meta': {'subject_id': subj_idx, 'no_tremor': True}
+                }
+                continue
+            
+            # Calculate tremor RMS using subject-specific model
+            acc_target = pk_config.get_tremor_rms(
+                subj_idx, "acc", body_part, label,
+                jitter_std=jitter_std if use_jitter else 0.0,
+                rng=jitter_rng
+            )
+            
+            gyro_target = pk_config.get_tremor_rms(
+                subj_idx, "gyro", body_part, label,
+                jitter_std=jitter_std if use_jitter else 0.0,
+                rng=jitter_rng
+            )
+            
+            mag_target = 0.0  # No magnetometer tremor
+            
+            # Get subject-specific tremor frequency
+            freq_hz = pk_config.get_tremor_frequency(subj_idx)
+            
+        else:  # sampling_method == "interval"
+            # Interval-based method: sample parameters per window
+            score, acc_target, freq_hz = pk_config.sample_tremor_params(
+                augment_mode=augment_mode,
+                rng=interval_rng
+            )
+            
+            # Calculate gyroscope RMS from accelerometer RMS
+            k_g = pk_config.choose_kg_from_rms_acc(acc_target)
+            gyro_target = k_g * acc_target
+            
+            mag_target = 0.0  # No magnetometer tremor
+        
+        # ========================================
+        # Generate tremor with calculated parameters
+        # ========================================
+        L = win_end - win_start
+        
+        # Create deterministic seed for this (window_idx, body_part)
+        body_part_offset = {'ankle': 0, 'arm': 1, 'chest': 2}.get(body_part, 0)
+        seed = (scenario_seed + w_idx * 7919 + body_part_offset * 10000) & 0xffffffff
+        
+        # Create dummy signals (zeros) to apply tremor
+        X_acc_dummy = np.zeros((L, 3), dtype=np.float64)
+        X_gyro_dummy = np.zeros((L, 3), dtype=np.float64)
+        X_mag_dummy = np.zeros((L, 3), dtype=np.float64)
+        
+        # Generate tremor using calculated RMS values and subject-specific frequency
+        X_acc_t, X_gyro_t, X_mag_t, meta = simulate_and_add_tremor_imu(
+            X_acc_dummy,
+            X_gyro_dummy,
+            X_mag_dummy,
+            fs=fs,
+            freq_hz=freq_hz,
+            mu=tremor_mu,
+            sigma=tremor_sigma,
+            dt=tremor_dt,
+            acc_rms=acc_target,
+            gyro_rms=gyro_target,
+            mag_rms=mag_target,
+            use_acc_state="x1",
+            use_gyro_state="x2",
+            use_mag_state="x1",
+            intermittent=tremor_intermittent,
+            on_prob=tremor_on_prob,
+            min_on_sec=tremor_min_on_sec,
+            max_on_sec=tremor_max_on_sec,
+            seed=seed
+        )
+        
+        # Extract noise (difference from dummy)
+        acc_noise = X_acc_t - X_acc_dummy
+        gyro_noise = X_gyro_t - X_gyro_dummy
+        mag_noise = X_mag_t - X_mag_dummy
+        
+        # Add metadata based on sampling method
+        meta['subject_id'] = subj_idx
+        meta['body_part'] = body_part
+        meta['activity'] = label
+        meta['acc_target_rms'] = acc_target
+        meta['gyro_target_rms'] = gyro_target
+        meta['mag_target_rms'] = mag_target
+        meta['freq_hz'] = freq_hz
+        meta['sampling_method'] = sampling_method
+        
+        if sampling_method == "subject":
+            meta['severity'] = pk_config.get_subject_severity(subj_idx)
+        else:  # interval
+            # Get severity from score
+            score = pk_config.get_tremor_score(acc_target)
+            if score == 0:
+                meta['severity'] = 'none'
+            elif score == 1:
+                meta['severity'] = 'mild'
+            elif score == 2:
+                meta['severity'] = 'mild-moderate'
+            elif score == 3:
+                meta['severity'] = 'moderate-severe'
+            else:
+                meta['severity'] = 'severe'
+            meta['augment_mode'] = augment_mode
+            meta['score'] = score
+        
+        tremor_cache[(w_idx, body_part)] = {
+            'acc_noise': acc_noise.astype(np.float32),
+            'gyro_noise': gyro_noise.astype(np.float32),
+            'mag_noise': mag_noise.astype(np.float32),
+            'meta': meta
+        }
+    
+    print(f"✓ Tremor cache populated with {len(tremor_cache)} entries")
+    print(f"{'='*80}\n")
+    
+    return tremor_cache
+
+
+def write_tremor_parkinson_params_file(
+    output_path,
+    mu,
+    sigma,
+    dt,
+    intermittent,
+    on_prob,
+    min_on_sec,
+    max_on_sec,
+    use_jitter,
+    jitter_std,
+    scenario_seed
+):
+    """
+    Write a tremor parameters file documenting the Parkinson model settings.
+    """
+    from pathlib import Path
+    
+    tremor_lines = [
+        "=" * 80,
+        "TREMOR NOISE PARAMETERS - PARKINSON PATIENT MODEL",
+        "=" * 80,
+        "",
+        "Model: RMS_acc = A_subject[subj] * C[body_part] * beta[activity] * (1 + jitter)",
+        "       RMS_gyro = k_g(RMS_acc) * RMS_acc",
+        "       RMS_mag = 0.0 (no tremor)",
+        "",
+        "=" * 80,
+        "Subject-Specific Baseline (A_subject) - Accelerometer RMS:",
+        "=" * 80,
+    ]
+    
+    for subj_id, acc_rms in sorted(pk_config.A_SUBJECT.items()):
+        severity = pk_config.get_subject_severity(subj_id)
+        k_g = pk_config.choose_kg_from_rms_acc(acc_rms)
+        gyro_rms = k_g * acc_rms
+        freq = pk_config.get_tremor_frequency(subj_id)
+        tremor_lines.append(
+            f"  Subject {subj_id:2d} ({severity:16s}): "
+            f"Acc={acc_rms:.2f} m/s² -> k_g={k_g:.1f} -> Gyro={gyro_rms:.2f} deg/s, Freq={freq:.1f} Hz"
+        )
+    
+    tremor_lines.extend([
+        "",
+        "=" * 80,
+        "Tremor Frequency (Hz) per Subject:",
+        "=" * 80,
+    ])
+    
+    for subj_id, freq in sorted(pk_config.FREQ_TREMOR.items()):
+        tremor_lines.append(f"  Subject {subj_id:2d}: {freq:.1f} Hz")
+    
+    tremor_lines.extend([
+        "",
+        "=" * 80,
+        "Body Part Scaling (C):",
+        "=" * 80,
+    ])
+    
+    for bp, scale in sorted(pk_config.C_BODY_PART.items()):
+        tremor_lines.append(f"  {bp.capitalize():7s}: {scale:.2f}x")
+    
+    tremor_lines.extend([
+        "",
+        "=" * 80,
+        "Activity Modulation (beta):",
+        "=" * 80,
+        "  Resting activities (higher tremor):",
+    ])
+    
+    for act in [1, 2, 3]:
+        if act in pk_config.BETA_ACTIVITY:
+            tremor_lines.append(f"    Activity {act:2d}: beta={pk_config.BETA_ACTIVITY[act]:.2f}")
+    
+    tremor_lines.append("  Movement activities (reduced tremor):")
+    for act in [4, 9, 10, 11]:
+        if act in pk_config.BETA_ACTIVITY:
+            tremor_lines.append(f"    Activity {act:2d}: beta={pk_config.BETA_ACTIVITY[act]:.2f}")
+    
+    tremor_lines.extend([
+        "",
+        "=" * 80,
+        "Technical Parameters:",
+        "=" * 80,
+        f"  Van der Pol mu: {mu} (controls nonlinearity / limit-cycle dynamics)",
+        f"  Stochastic sigma: {sigma} (controls irregularity)",
+        f"  Integration dt: {dt} s",
+        f"  Frequency: subject-specific (freq_hz, omega = 2πf)",
+        f"  Jitter: {'enabled' if use_jitter else 'disabled'}",
+    ])
+    
+    if use_jitter:
+        tremor_lines.append(f"    Jitter std: {jitter_std:.3f} ({jitter_std*100:.1f}% variability)")
+    
+    tremor_lines.extend([
+        f"  Intermittent: {intermittent}",
+    ])
+    
+    if intermittent:
+        tremor_lines.extend([
+            f"    On probability: {on_prob}",
+            f"    Duration: {min_on_sec}-{max_on_sec}s",
+        ])
+    
+    tremor_lines.extend([
+        f"  Scenario SEED: {scenario_seed}",
+        "",
+        "=" * 80,
+        "Oscillator States:",
+        "=" * 80,
+        "  Accelerometer: uses x1(t) (position-like)",
+        "  Gyroscope: uses x2(t) (velocity-like, 90° phase shift)",
+        "  Magnetometer: uses x1(t) (position-like)",
+        "  Same tremor direction per body part across all sensors",
+        "",
+        "=" * 80,
+        "Pipeline:",
+        "=" * 80,
+        "  1. For each window: identify subject_id, body_part, activity",
+        "  2. Calculate RMS using Parkinson model formula",
+        "  3. Generate van der Pol oscillator with target RMS",
+        "  4. Apply tremor to RAW sensor data",
+        "  5. Resample (if needed)",
+        "  6. Apply z-score normalization",
+        "",
+        "=" * 80,
+        "Clinical Realism:",
+        "=" * 80,
+        "  ✓ Subject-specific severity (mild/moderate/severe)",
+        "  ✓ Upper limbs more affected than lower limbs",
+        "  ✓ Prominent resting tremor (sitting, standing)",
+        "  ✓ Reduced tremor during active movement",
+        "  ✓ Natural window-to-window variability",
+        "=" * 80,
+    ])
+    
+    Path(output_path).write_text("\n".join(tremor_lines), encoding="utf-8")
+    return output_path

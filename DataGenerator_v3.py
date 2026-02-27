@@ -29,13 +29,15 @@ NOISE_LEVEL = 0.01      # augmentation noise level (NOT scenario noise)
 NUM_SUBJECTS = 10
 
 # Dataset location (folder containing mHealth_subject*.log)
+script_dir = Path(__file__).parent.resolve()
+
 DATA_PATH = Path(
-    "/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code/data/MHEALTHDATASET"
+    script_dir / "data" / "MHEALTHDATASET"
 )
 
 # Output base folder
 OUT_BASE = Path(
-    "/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code/data/Datagenerator_files"
+    script_dir / "data" / "Datagenerator_files"
 )
 
 # Seeds for reproducibility
