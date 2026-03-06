@@ -88,16 +88,16 @@ LOG_DIR = Path("Tremor_head/fusion")
 LOG_DIR.mkdir(exist_ok=True)
 PLOT_DIR = LOG_DIR / "plots"
 PLOT_DIR.mkdir(exist_ok=True)
-LOG_FILE = LOG_DIR / "feature_fusion_training.jsonl"
+LOG_FILE = LOG_DIR / "feature_fusion_training_activity_emb_mixed.jsonl"
 
 # Model paths
 MODEL_DIR = LOG_DIR / "models"
 MODEL_DIR.mkdir(exist_ok=True)
-MODEL_BEST_PATH = MODEL_DIR / "feature_fusion_best.pth"
+MODEL_BEST_PATH = MODEL_DIR / "feature_fusion_best_activity_emb_mixed.pth"
 
 # History files
-ACCURACY_HISTORY_FILE = LOG_DIR / "accuracy_history.json"
-BEST_ACCURACIES_FILE = LOG_DIR / "best_accuracies.json"
+ACCURACY_HISTORY_FILE = LOG_DIR / "accuracy_history_activity_emb_mixed.json"
+BEST_ACCURACIES_FILE = LOG_DIR / "best_accuracies_activity_emb_mixed.json"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -111,8 +111,9 @@ def load_embeddings(variant_name: str, sensor_name: str) -> Dict[str, np.ndarray
     Returns:
         Dictionary with train/val/test embeddings, labels, activities, subjects
     """
-    embeddings_path = DATA_PATH / variant_name / "ExtractedFeatures" / f"{sensor_name}_embeddings.npz"
-    
+    #embeddings_path = DATA_PATH / variant_name / "ExtractedFeatures" / f"{sensor_name}_embeddings.npz"
+    embeddings_path = DATA_PATH / variant_name / "ExtractedFeatures_ActivityEmb_mixedSet" / f"{sensor_name}_embeddings.npz"
+
     if not embeddings_path.exists():
         raise FileNotFoundError(
             f"Embeddings not found: {embeddings_path}\n"
@@ -120,7 +121,9 @@ def load_embeddings(variant_name: str, sensor_name: str) -> Dict[str, np.ndarray
         )
     
     print(f"  Loading {sensor_name} from {embeddings_path.name}")
+    print(f"     Full path: {embeddings_path}")
     data = np.load(embeddings_path)
+    print(f"     Keys in file: {list(data.keys())}")
     
     return {
         "train_embeddings": data["train_embeddings"],
@@ -202,7 +205,7 @@ def merge_dataset_variants(sensor_list: List[str], variant_list: List[str]) -> D
     print(f"  Val samples: {len(merged['val_embeddings'])}")
     print(f"  Test samples: {len(merged['test_embeddings'])}")
     print(f"  Embedding dim: {merged['train_embeddings'].shape[1]}")
-    print(f"  Score distribution (train): {np.bincount(merged['train_labels'], minlength=5)}")
+    print(f"  Score distribution (train): {np.bincount(merged['train_labels'].astype(int), minlength=5)}")
     
     return merged
 

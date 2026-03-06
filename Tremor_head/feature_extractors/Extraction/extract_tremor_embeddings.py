@@ -278,7 +278,7 @@ def main():
             continue
         
         # Create output directory
-        output_dir = variant_path / "ExtractedFeatures"
+        output_dir = variant_path / "ExtractedFeatures_tremorEmb_mixedSet"
         output_dir.mkdir(exist_ok=True, parents=True)
         
         # Extract embeddings for each sensor

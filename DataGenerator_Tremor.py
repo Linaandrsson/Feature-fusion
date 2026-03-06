@@ -41,6 +41,7 @@ from typing import List, Dict, Optional, Tuple
 from Noise_simulation.Tremor import (
     precompute_tremor_cache_with_parkinson_model,
     write_tremor_parkinson_params_file,
+    apply_tremor_rotation_to_magnetometer,
     TREMOR_MU, TREMOR_SIGMA, TREMOR_DT,
     TREMOR_INTERMITTENT, TREMOR_ON_PROB, TREMOR_MIN_ON_SEC, TREMOR_MAX_ON_SEC
 )
@@ -65,6 +66,13 @@ OUT_BASE = Path(script_dir / "data" / "Tremor_datagenerator_files")
 # Seeds
 SEED = 0                        # Controls augmentation noise
 TREMOR_SEED = 42                # Controls tremor generation (change for different realizations)
+
+# ============================================================
+# CONFIG - Diagnostics
+# ============================================================
+# Set to True to run sanity checks on generated tremor
+RUN_SANITY_CHECKS = True
+NUM_DIAGNOSTIC_WINDOWS = 10      # Number of windows to inspect for diagnostics
 
 # ============================================================
 # CONFIG - Tremor Generation
@@ -155,6 +163,106 @@ def augment_window(win: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return win + noise
 
 
+def generate_rotation_matrix(rng: np.random.Generator, max_angle_deg: float = 15.0) -> np.ndarray:
+    """
+    Generate a random 3D rotation matrix from small random orientation perturbations.
+    
+    Args:
+        rng: Random number generator
+        max_angle_deg: Maximum rotation angle in degrees (default 15°)
+        
+    Returns:
+        R: 3x3 rotation matrix
+        
+    Note:
+        Rotation simulates realistic sensor orientation variations (e.g., slight
+        misalignment during attachment) while preserving physical motion structure.
+    """
+    # Sample random rotation angles (in radians) from uniform distribution
+    max_angle_rad = np.deg2rad(max_angle_deg)
+    angles = rng.uniform(-max_angle_rad, max_angle_rad, size=3)
+    
+    # Rotation matrices for each axis
+    theta_x, theta_y, theta_z = angles
+    
+    # X-axis rotation
+    Rx = np.array([
+        [1, 0, 0],
+        [0, np.cos(theta_x), -np.sin(theta_x)],
+        [0, np.sin(theta_x), np.cos(theta_x)]
+    ])
+    
+    # Y-axis rotation
+    Ry = np.array([
+        [np.cos(theta_y), 0, np.sin(theta_y)],
+        [0, 1, 0],
+        [-np.sin(theta_y), 0, np.cos(theta_y)]
+    ])
+    
+    # Z-axis rotation
+    Rz = np.array([
+        [np.cos(theta_z), -np.sin(theta_z), 0],
+        [np.sin(theta_z), np.cos(theta_z), 0],
+        [0, 0, 1]
+    ])
+    
+    # Combine rotations: R = Rz * Ry * Rx
+    R = Rz @ Ry @ Rx
+    return R
+
+
+def apply_rotation_augmentation(win_raw: np.ndarray, rng: np.random.Generator, max_angle_deg: float = 15.0) -> np.ndarray:
+    """
+    Apply rotation-based data augmentation to 3-axis sensor data.
+    
+    Args:
+        win_raw: Window of shape (L, 3) with raw sensor readings (BEFORE z-score)
+        rng: Random number generator
+        max_angle_deg: Maximum rotation angle in degrees
+        
+    Returns:
+        Rotated window of shape (L, 3)
+        
+    Note:
+        Rotation formula: x'(t) = R @ x(t)
+        where x(t) is the original 3D signal vector and R is a random rotation matrix.
+    """
+    R = generate_rotation_matrix(rng, max_angle_deg)
+    # Apply rotation: (L, 3) @ (3, 3)^T = (L, 3)
+    return win_raw @ R.T
+
+
+def apply_awgn_raw(win_raw: np.ndarray, rng: np.random.Generator, rms_ratio: float = 0.2) -> np.ndarray:
+    """
+    Apply AWGN to raw sensor signal with noise level relative to signal RMS.
+    
+    Args:
+        win_raw: Raw input window of shape (L, C) BEFORE preprocessing
+        rng: Random number generator
+        rms_ratio: Noise RMS as a fraction of signal RMS per channel (default 0.2 = 20%)
+        
+    Returns:
+        Corrupted window with same shape (L, C)
+        
+    Note:
+        Applied BEFORE resampling and z-score normalization.
+    """
+    L, C = win_raw.shape
+    noise = np.zeros_like(win_raw)
+    
+    # Add noise independently per channel
+    for c in range(C):
+        signal_rms = np.sqrt(np.mean(win_raw[:, c]**2))
+        # Avoid division by zero for flat signals
+        if signal_rms < 1e-8:
+            signal_rms = 1.0
+        
+        noise_std = rms_ratio * signal_rms
+        noise[:, c] = rng.normal(0, noise_std, size=L)
+    
+    return win_raw + noise
+
+
 def load_subject_data_with_retry(file_path: Path, max_retries: int = 5, delay: float = 2.0) -> np.ndarray:
     """Load subject data with retry logic for OneDrive timeout issues."""
     for attempt in range(max_retries):
@@ -209,6 +317,198 @@ def get_sensor_type(sensor_name: str) -> str:
     elif 'ECG' in sensor_name:
         return 'ecg'
     return 'unknown'
+
+
+# ============================================================
+# Diagnostic Utilities
+# ============================================================
+
+def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list, 
+                             data_loader_func, num_windows: int = 5):
+    """
+    Diagnostic utility to verify tremor generation pipeline.
+    
+    Checks:
+    - Rotation-based magnetometer tremor (Mag_arm, Mag_ankle)
+    - Additive tremor for acc/gyro
+    - Tremor-free sensor policy (Acc_chest, ECG)
+    - Ankle tremor scaling
+    
+    Args:
+        tremor_cache: Pre-computed tremor cache
+        window_specs: List of (subj_idx, label, win_start, win_end)
+        data_loader_func: Function to load subject data
+        num_windows: Number of windows to inspect
+    """
+    print("\n" + "="*80)
+    print("TREMOR PIPELINE SANITY CHECKS")
+    print("="*80)
+    
+    # Sample windows for inspection
+    sample_indices = np.linspace(0, len(window_specs)-1, num_windows, dtype=int)
+    
+    # Statistics collectors for Mag_ankle
+    mag_ankle_stats = {
+        'gyro_rms': [],
+        'mag_perturbation_rms': [],
+        'mag_original_norm': [],
+        'mag_rotated_norm': []
+    }
+    
+    print("\n" + "-"*80)
+    print("CHECKING SAMPLE WINDOWS")
+    print("-"*80)
+    
+    for idx in sample_indices:
+        w_idx = int(idx)
+        subj_idx, label, win_start, win_end = window_specs[w_idx]
+        
+        print(f"\nWindow {w_idx}: Subject {subj_idx}, Activity {label}")
+        
+        # Check each body part's cache
+        for body_part in ['arm', 'ankle', 'chest']:
+            cache_entry = tremor_cache.get((w_idx, body_part))
+            if cache_entry is None:
+                continue
+                
+            meta = cache_entry['meta']
+            acc_rms = meta.get('acc_target_rms', 0.0)
+            gyro_rms = meta.get('gyro_target_rms', 0.0)
+            freq = meta.get('freq_hz', 0.0)
+            
+            # Get tremor noise
+            acc_noise = cache_entry['acc_noise']
+            gyro_noise = cache_entry['gyro_noise']
+            mag_noise = cache_entry['mag_noise']
+            
+            # Calculate RMS of noise
+            acc_noise_rms = np.sqrt(np.mean(acc_noise**2))
+            gyro_noise_rms = np.sqrt(np.mean(gyro_noise**2))
+            mag_noise_rms = np.sqrt(np.mean(mag_noise**2))
+            
+            print(f"  {body_part.upper()}: acc_target={acc_rms:.4f}, gyro_target={gyro_rms:.4f}, "
+                  f"freq={freq:.2f} Hz")
+            print(f"    Noise RMS: acc={acc_noise_rms:.4f}, gyro={gyro_noise_rms:.4f}, "
+                  f"mag={mag_noise_rms:.4f}")
+    
+    # Detailed Mag_ankle rotation-based tremor check
+    print("\n" + "-"*80)
+    print("MAG_ANKLE ROTATION-BASED TREMOR ANALYSIS")
+    print("-"*80)
+    
+    # Load subject data for detailed mag_ankle inspection
+    data = data_loader_func(window_specs[sample_indices[0]][0])
+    
+    for idx in sample_indices:
+        w_idx = int(idx)
+        subj_idx, label, win_start, win_end = window_specs[w_idx]
+        
+        # Load data if different subject
+        if subj_idx != window_specs[sample_indices[0]][0]:
+            data = data_loader_func(subj_idx)
+        
+        ankle_cache = tremor_cache.get((w_idx, 'ankle'))
+        if ankle_cache is None:
+            continue
+        
+        # Get original magnetometer signal
+        mag_cols = SENSORS['Mag_ankle']
+        mag_original = data[win_start:win_end, mag_cols].copy()
+        
+        # Get gyro tremor
+        gyro_tremor = ankle_cache['gyro_noise']
+        
+        # Apply rotation to get rotated mag
+        mag_rotated = apply_tremor_rotation_to_magnetometer(
+            mag_signal=mag_original,
+            gyro_tremor=gyro_tremor,
+            fs=ORIGINAL_FS
+        )
+        
+        # Calculate perturbation
+        mag_perturbation = mag_rotated - mag_original
+        
+        # Calculate statistics
+        gyro_rms = np.sqrt(np.mean(gyro_tremor**2))
+        perturbation_rms = np.sqrt(np.mean(mag_perturbation**2))
+        original_norm_mean = np.mean(np.linalg.norm(mag_original, axis=1))
+        rotated_norm_mean = np.mean(np.linalg.norm(mag_rotated, axis=1))
+        
+        mag_ankle_stats['gyro_rms'].append(gyro_rms)
+        mag_ankle_stats['mag_perturbation_rms'].append(perturbation_rms)
+        mag_ankle_stats['mag_original_norm'].append(original_norm_mean)
+        mag_ankle_stats['mag_rotated_norm'].append(rotated_norm_mean)
+        
+        print(f"\nWindow {w_idx}:")
+        print(f"  Gyro tremor RMS: {gyro_rms:.4f} deg/s")
+        print(f"  Mag perturbation RMS: {perturbation_rms:.4f}")
+        print(f"  Mag vector norm: original={original_norm_mean:.2f}, "
+              f"rotated={rotated_norm_mean:.2f} (should be ~equal)")
+        print(f"  Perturbation / Gyro ratio: {perturbation_rms/gyro_rms if gyro_rms > 0 else 0:.4f}")
+    
+    # Summary statistics
+    print("\n" + "-"*80)
+    print("MAG_ANKLE SUMMARY STATISTICS")
+    print("-"*80)
+    print(f"Gyro tremor RMS: mean={np.mean(mag_ankle_stats['gyro_rms']):.4f}, "
+          f"std={np.std(mag_ankle_stats['gyro_rms']):.4f}")
+    print(f"Mag perturbation RMS: mean={np.mean(mag_ankle_stats['mag_perturbation_rms']):.4f}, "
+          f"std={np.std(mag_ankle_stats['mag_perturbation_rms']):.4f}")
+    print(f"Mag vector norm preservation:")
+    print(f"  Original: mean={np.mean(mag_ankle_stats['mag_original_norm']):.2f}")
+    print(f"  Rotated:  mean={np.mean(mag_ankle_stats['mag_rotated_norm']):.2f}")
+    print(f"  Difference: {abs(np.mean(mag_ankle_stats['mag_original_norm']) - np.mean(mag_ankle_stats['mag_rotated_norm'])):.4f} (should be ~0)")
+    
+    # Check policy compliance
+    print("\n" + "-"*80)
+    print("SENSOR POLICY COMPLIANCE CHECK")
+    print("-"*80)
+    
+    # Check tremor-free sensors
+    print(f"\nTremor-free sensors: {pk_config.TREMOR_FREE_SENSORS}")
+    for sensor in pk_config.TREMOR_FREE_SENSORS:
+        body_part = extract_body_part(sensor)
+        cache_entry = tremor_cache.get((sample_indices[0], body_part))
+        if cache_entry:
+            meta = cache_entry['meta']
+            print(f"  {sensor}: acc_rms={meta.get('acc_target_rms', 0.0):.4f} "
+                  f"(chest always has values, but sensor gets no tremor)")
+    
+    # Check rotation-based mag sensors
+    print(f"\nRotation-based mag sensors: {pk_config.ROTATION_BASED_MAG_SENSORS}")
+    print("  These use gyro-driven rotation, NOT additive mag_noise")
+    for sensor in pk_config.ROTATION_BASED_MAG_SENSORS:
+        body_part = extract_body_part(sensor)
+        cache_entry = tremor_cache.get((sample_indices[0], body_part))
+        if cache_entry:
+            mag_noise_rms = np.sqrt(np.mean(cache_entry['mag_noise']**2))
+            print(f"  {sensor}: mag_noise RMS={mag_noise_rms:.6f} (should be ~0)")
+    
+    # Check ankle scaling
+    print(f"\nAnkle tremor scaling (interval mode):")
+    print(f"  ANKLE_RATIO_BY_SCORE: {pk_config.ANKLE_RATIO_BY_SCORE}")
+    
+    # Sample a couple windows and check ankle vs arm ratio
+    arm_acc_rms = []
+    ankle_acc_rms = []
+    for idx in sample_indices[:3]:
+        w_idx = int(idx)
+        arm_cache = tremor_cache.get((w_idx, 'arm'))
+        ankle_cache = tremor_cache.get((w_idx, 'ankle'))
+        if arm_cache and ankle_cache:
+            arm_rms = arm_cache['meta'].get('acc_target_rms', 0.0)
+            ankle_rms = ankle_cache['meta'].get('acc_target_rms', 0.0)
+            arm_acc_rms.append(arm_rms)
+            ankle_acc_rms.append(ankle_rms)
+            ratio = ankle_rms / arm_rms if arm_rms > 0 else 0
+            score = pk_config.get_tremor_score(arm_rms)
+            expected_ratio = pk_config.ANKLE_RATIO_BY_SCORE.get(score, 0)
+            print(f"  Window {w_idx}: arm={arm_rms:.4f}, ankle={ankle_rms:.4f}, "
+                  f"ratio={ratio:.3f}, expected={expected_ratio:.3f}, score={score}")
+    
+    print("\n" + "="*80)
+    print("SANITY CHECKS COMPLETE")
+    print("="*80)
 
 
 # ============================================================
@@ -336,6 +636,17 @@ def generate_tremor_dataset(variant_name: str):
         print(f"  ✓ Created clean cache with {len(tremor_cache)} entries")
     
     # -------------------------------
+    # Optional: Run sanity checks on tremor cache
+    # -------------------------------
+    if RUN_SANITY_CHECKS and GENERATE_TREMOR:
+        run_tremor_sanity_checks(
+            tremor_cache=tremor_cache,
+            window_specs=window_specs,
+            data_loader_func=load_subject_data_func,
+            num_windows=NUM_DIAGNOSTIC_WINDOWS
+        )
+    
+    # -------------------------------
     # Step 3: Process each sensor and save
     # -------------------------------
     print("\n" + "=" * 80)
@@ -359,8 +670,19 @@ def generate_tremor_dataset(variant_name: str):
         tremor_gyro_rms_list = []
         tremor_score_list = []
         
-        body_part = extract_body_part(sensor_name)
         sensor_type = get_sensor_type(sensor_name)
+        
+        # Determine body parts for different purposes:
+        # - signal_body_part: actual sensor location (for IMU sensor signal processing)
+        # - severity_body_part: which cache to use for global tremor severity (for augmentation strategy)
+        signal_body_part = extract_body_part(sensor_name)
+        
+        # For tremor-free sensors (defined in tremor policy): use arm severity as global reference
+        # For all other sensors: use their own body part
+        if sensor_name in pk_config.TREMOR_FREE_SENSORS:
+            severity_body_part = 'arm'  # Use arm as global severity reference
+        else:
+            severity_body_part = signal_body_part
         
         # Load all subject data
         subject_data_cache = {}
@@ -379,13 +701,65 @@ def generate_tremor_dataset(variant_name: str):
             # Extract window data
             win_raw = data[win_start:win_end, cols].copy()
             
-            # Skip ECG for tremor (only IMU sensors)
-            if sensor_type in ['acc', 'gyro', 'mag']:
-                cache_entry = tremor_cache.get((w_idx, body_part))
-                if cache_entry is not None:
-                    noise_key = f'{sensor_type}_noise'
-                    tremor_noise = cache_entry[noise_key]
-                    win_raw += tremor_noise
+            # Get severity from appropriate cache for augmentation strategy
+            severity_cache_entry = tremor_cache.get((w_idx, severity_body_part))
+            severity_meta = severity_cache_entry.get('meta', {}) if severity_cache_entry else {}
+            tremor_acc_rms_target = severity_meta.get('acc_target_rms', 0.0)
+            tremor_score_val = pk_config.get_tremor_score(tremor_acc_rms_target) if GENERATE_TREMOR else 0
+            
+            # Determine if this sensor should receive tremor or alternative augmentation
+            # Check tremor-free sensor policy (defined in tremor_parkinson_config)
+            apply_tremor = False
+            apply_awgn_aug = False
+            apply_rotation_aug = False
+            
+            if sensor_name in pk_config.TREMOR_FREE_SENSORS:
+                # Tremor-free sensors: no tremor, use alternative augmentation
+                # Use arm severity score to determine augmentation strategy
+                # - Clean (score 0): no augmentation (keep original)
+                # - Mild (score 1-2): AWGN
+                # - Severe (score 3-4): Rotation (3-axis sensors) or AWGN (2-axis sensors like ECG)
+                if tremor_score_val == 0:
+                    # Clean: keep original signal
+                    pass
+                elif tremor_score_val in [1, 2]:
+                    # Mild: use AWGN
+                    apply_awgn_aug = True
+                else:  # score 3 or 4
+                    # Severe: use rotation for 3-axis sensors, AWGN for others
+                    if sensor_type == 'acc':
+                        apply_rotation_aug = True
+                    else:  # ECG or other 2-axis sensors: use AWGN
+                        apply_awgn_aug = True
+            else:
+                # All other sensors: apply tremor based on tremor model
+                # Use signal_body_part cache for actual tremor noise
+                signal_cache_entry = tremor_cache.get((w_idx, signal_body_part))
+                if signal_cache_entry is not None:
+                    # Special case: rotation-based magnetometer tremor (defined in policy)
+                    # instead of independent additive noise
+                    if sensor_name in pk_config.ROTATION_BASED_MAG_SENSORS:
+                        # Magnetometer tremor is modeled as a consequence of tremor-induced
+                        # orientation changes, not as independent additive tremor noise
+                        gyro_tremor = signal_cache_entry['gyro_noise']
+                        win_raw = apply_tremor_rotation_to_magnetometer(
+                            mag_signal=win_raw,
+                            gyro_tremor=gyro_tremor,
+                            fs=ORIGINAL_FS
+                        )
+                    elif sensor_type in ['acc', 'gyro', 'mag']:
+                        # Standard additive tremor for acc, gyro, and other mag sensors
+                        noise_key = f'{sensor_type}_noise'
+                        tremor_noise = signal_cache_entry[noise_key]
+                        win_raw += tremor_noise
+            
+            # Apply AWGN augmentation if applicable (before resampling)
+            if apply_awgn_aug:
+                win_raw = apply_awgn_raw(win_raw, aug_rng, rms_ratio=0.15)
+            
+            # Apply rotation augmentation if applicable (before resampling)
+            if apply_rotation_aug:
+                win_raw = apply_rotation_augmentation(win_raw, aug_rng, max_angle_deg=10.0)
             
             # Resample
             win_resampled = resample_window(win_raw, ORIGINAL_FS, FS)
@@ -393,20 +767,30 @@ def generate_tremor_dataset(variant_name: str):
             # Z-score normalize
             win = zscore_window(win_resampled)
             
-            # Get tremor labels for this window
-            cache_entry = tremor_cache.get((w_idx, body_part))
-            if cache_entry is not None and GENERATE_TREMOR:
-                meta = cache_entry['meta']
-                tremor_freq = meta.get('freq_hz', 0.0)
-                tremor_acc_rms = meta.get('acc_target_rms', 0.0)
-                tremor_gyro_rms = meta.get('gyro_target_rms', 0.0)
-                tremor_score = pk_config.get_tremor_score(tremor_acc_rms)
-            else:
-                # Clean data
+            # Set tremor labels for this window
+            # For tremor-free sensors (defined in policy): set labels to 0 (no tremor in signal)
+            # For all other sensors: use actual tremor parameters from signal cache
+            if sensor_name in pk_config.TREMOR_FREE_SENSORS:
+                # These sensors have NO tremor, labels should reflect that
                 tremor_freq = 0.0
                 tremor_acc_rms = 0.0
                 tremor_gyro_rms = 0.0
                 tremor_score = 0
+            else:
+                # Other sensors: use actual tremor labels from signal cache
+                signal_cache_entry = tremor_cache.get((w_idx, signal_body_part))
+                if signal_cache_entry is not None and GENERATE_TREMOR:
+                    meta = signal_cache_entry['meta']
+                    tremor_freq = meta.get('freq_hz', 0.0)
+                    tremor_acc_rms = meta.get('acc_target_rms', 0.0)
+                    tremor_gyro_rms = meta.get('gyro_target_rms', 0.0)
+                    tremor_score = pk_config.get_tremor_score(tremor_acc_rms)
+                else:
+                    # Clean data
+                    tremor_freq = 0.0
+                    tremor_acc_rms = 0.0
+                    tremor_gyro_rms = 0.0
+                    tremor_score = 0
             
             # Apply augmentation (creates AUG_SIZE copies)
             for a in range(AUG_SIZE):
@@ -525,6 +909,32 @@ def generate_tremor_dataset(variant_name: str):
             "Model: RMS_acc = A_subject[subj] × C[body_part] × beta[activity] × (1 + jitter)",
             "       RMS_gyro = k_g(RMS_acc) × RMS_acc",
             "       Frequency = subject-specific (FREQ_TREMOR dict)",
+            "",
+            "=" * 80,
+            "Augmentation Strategy:",
+            "=" * 80,
+            f"Tremor-free sensors (policy: {pk_config.TREMOR_FREE_SENSORS}):",
+            "  - These sensors do NOT receive tremor in the signal (tremor-free zones)",
+            "  - Augmentation strategy determined by ARM severity score (global reference)",
+            "  - Score 0 (Clean): Original signal (no augmentation)",
+            "  - Score 1-2 (Mild): AWGN (Additive White Gaussian Noise, RMS ratio 15%)",
+            "  - Score 3-4 (Severe): Rotation matrix (3-axis) or AWGN (2-axis)",
+            "  - Tremor labels set to 0 (tremor_freq=0, tremor_acc_rms=0, tremor_gyro_rms=0)",
+            "",
+            "All other sensors (Acc_ankle, Acc_arm, Gyro_*, Mag_*):",
+            "  - Parkinson tremor applied based on sensor-specific severity score",
+            "  - Tremor labels reflect actual tremor in signal",
+            "",
+            f"Rotation-based magnetometer sensors (policy: {pk_config.ROTATION_BASED_MAG_SENSORS}):",
+            "  - Magnetometer tremor is NOT generated as independent additive noise",
+            "  - Instead: tremor-induced orientation changes from Gyro tremor are",
+            "    applied as cumulative rotations to the original magnetometer vector",
+            "  - Physical model: mag tremor = consequence of tremor-induced rotation",
+            "  - This preserves the baseline mag field structure while adding realistic",
+            "    secondary tremor effects from orientation perturbations",
+            "",
+            "Note: Tremor policies are defined in tremor_parkinson_config.py",
+            "      This ensures label consistency with actual signal content.",
         ])
     else:
         info_lines.extend([
@@ -548,14 +958,17 @@ def generate_tremor_dataset(variant_name: str):
         "    - tremor_score: (N,) severity score",
         "",
         "  TXT files: (N, C×L+7) CSV format with columns:",
-        f"    - Columns 1-{target_window_len * 3}: Sensor data (flattened C×L)",
-        f"    - Column {target_window_len * 3 + 1}: Activity label (1-12)",
-        f"    - Column {target_window_len * 3 + 2}: Subject ID (1-10)",
-        f"    - Column {target_window_len * 3 + 3}: Base window index",
-        f"    - Column {target_window_len * 3 + 4}: Tremor frequency (Hz)",
-        f"    - Column {target_window_len * 3 + 5}: Tremor acc RMS (m/s²)",
-        f"    - Column {target_window_len * 3 + 6}: Tremor gyro RMS (deg/s)",
-        f"    - Column {target_window_len * 3 + 7}: Tremor severity score (0-4)",
+        "    - Sensor data (flattened C×L channels):",
+        f"      * 3-axis sensors (Acc, Gyro, Mag): Columns 1-{target_window_len * 3} (C=3, L={target_window_len})",
+        f"      * ECG sensor: Columns 1-{target_window_len * 2} (C=2, L={target_window_len})",
+        "    - Label columns (always last 7 columns):",
+        "      * Activity label (1-12)",
+        "      * Subject ID (1-10)",
+        "      * Base window index",
+        "      * Tremor frequency (Hz)",
+        "      * Tremor acc RMS (m/s²)",
+        "      * Tremor gyro RMS (deg/s)",
+        "      * Tremor severity score (0-4)",
         "",
         "=" * 80,
     ])

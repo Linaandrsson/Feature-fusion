@@ -21,7 +21,7 @@ from Noise_simulation.Tremor import (
 # CONFIG - Basic parameters
 # ============================================================
 ORIGINAL_FS = 50        # original sampling rate in the dataset (Hz)
-FS = 30                 # target sampling rate (Hz) - set same as ORIGINAL_FS to skip resampling
+FS = 50                 # target sampling rate (Hz) - set same as ORIGINAL_FS to skip resampling
 WINDOW_SEC = 2.0        # window length in seconds
 STRIDE_SEC = 2.0        # stride in seconds
 AUG_SIZE = 2            # number of augmented copies per window
@@ -601,7 +601,7 @@ def main():
         subject_ids = np.array(subj_list, dtype=np.int64)
         base_window_idx = np.array(base_idx_list, dtype=np.int64)  # (N,)
 
-        # Save NPZ
+        # Save NPZ with tremor-compatible fields
         npz_out = variant_dir / f"{sensor_name}.npz"
         np.savez_compressed(
             npz_out,
@@ -609,6 +609,10 @@ def main():
             y=y,
             subject_id=subject_ids,
             base_window_idx=base_window_idx,  # For lookup in corruption_log
+            tremor_freq=np.zeros(len(y), dtype=np.float32),  # All zeros for clean data
+            tremor_acc_rms=np.zeros(len(y), dtype=np.float32),
+            tremor_gyro_rms=np.zeros(len(y), dtype=np.float32),
+            tremor_score=np.zeros(len(y), dtype=np.float32),
             fs=FS,
             window_len=window_len,
             stride=stride,
@@ -616,11 +620,29 @@ def main():
             sensor_cols=np.array(cols, dtype=np.int64),
         )
 
-        # Save TXT
+        # Save TXT with tremor-compatible columns
         txt_out = variant_dir / f"{sensor_name}.txt"
         flat_rows = flatten_channel_blocks(X)
         labels_col = (y + 1).reshape(-1, 1)
-        sensor_txt = np.hstack([flat_rows, labels_col]).astype(np.float32)
+        
+        # Add tremor-compatible columns (all zeros for clean data)
+        # Format: [...sensor_data...] | [-7] activity | [-6] subject | [-5] base_idx | 
+        # [-4] tremor_freq | [-3] tremor_acc_rms | [-2] tremor_gyro_rms | [-1] tremor_score
+        tremor_freq = np.zeros((len(y), 1), dtype=np.float32)
+        tremor_acc_rms = np.zeros((len(y), 1), dtype=np.float32)
+        tremor_gyro_rms = np.zeros((len(y), 1), dtype=np.float32)
+        tremor_score = np.zeros((len(y), 1), dtype=np.float32)
+        
+        sensor_txt = np.hstack([
+            flat_rows, 
+            labels_col, 
+            subject_ids.reshape(-1, 1),
+            base_window_idx.reshape(-1, 1),
+            tremor_freq,
+            tremor_acc_rms,
+            tremor_gyro_rms,
+            tremor_score
+        ]).astype(np.float32)
         np.savetxt(txt_out, sensor_txt, delimiter=",", fmt="%.6f")
 
         print(f"[{sensor_name}] Saved: {txt_out.name}, {npz_out.name} | X={X.shape}, y={y.shape}")

@@ -69,8 +69,19 @@ def load_data(sensor_name: str, num_channels: int):
         raise FileNotFoundError(f"Data not found: {data_path}")
     
     data = np.loadtxt(data_path, delimiter=",")
-    X = data[:, :-1]
-    y = data[:, -1].astype(int) - 1  # 1..12 -> 0..11
+    
+    # Data format (tremor-compatible): 
+    # [...sensor data...] | [-7] activity | [-6] subject | [-5] base_idx | 
+    # [-4] tremor_freq | [-3] tremor_acc_rms | [-2] tremor_gyro_rms | [-1] tremor_score
+    X = data[:, :-7]  # Sensor data only (all columns except last 7)
+    y_activity = data[:, -7].astype(int) - 1  # Activity label 1..12 -> 0..11
+    y_subject = data[:, -6].astype(int)  # Subject ID
+    base_idx = data[:, -5].astype(int)  # Base window index
+    tremor_freq = data[:, -4].astype(np.float32)  # Tremor frequency
+    tremor_acc_rms = data[:, -3].astype(np.float32)  # Tremor ACC RMS
+    tremor_gyro_rms = data[:, -2].astype(np.float32)  # Tremor Gyro RMS
+    tremor_score = data[:, -1].astype(int)  # Tremor score 0-4
+    
     X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
     
     # Load splits from parent directory
@@ -78,11 +89,41 @@ def load_data(sensor_name: str, num_channels: int):
     val_idx = np.loadtxt(parent_dir / "val_idx.txt", dtype=int)
     test_idx = np.loadtxt(parent_dir / "test_idx.txt", dtype=int)
     
-    X_train, y_train = X[train_idx], y[train_idx]
-    X_val, y_val = X[val_idx], y[val_idx]
-    X_test, y_test = X[test_idx], y[test_idx]
+    # Split all data
+    X_train, y_activity_train = X[train_idx], y_activity[train_idx]
+    X_val, y_activity_val = X[val_idx], y_activity[val_idx]
+    X_test, y_activity_test = X[test_idx], y_activity[test_idx]
     
-    return X_train, y_train, X_val, y_val, X_test, y_test
+    # Also split metadata
+    meta_train = {
+        "activity": y_activity_train,
+        "subject": y_subject[train_idx],
+        "base_idx": base_idx[train_idx],
+        "tremor_freq": tremor_freq[train_idx],
+        "tremor_acc_rms": tremor_acc_rms[train_idx],
+        "tremor_gyro_rms": tremor_gyro_rms[train_idx],
+        "tremor_score": tremor_score[train_idx],
+    }
+    meta_val = {
+        "activity": y_activity_val,
+        "subject": y_subject[val_idx],
+        "base_idx": base_idx[val_idx],
+        "tremor_freq": tremor_freq[val_idx],
+        "tremor_acc_rms": tremor_acc_rms[val_idx],
+        "tremor_gyro_rms": tremor_gyro_rms[val_idx],
+        "tremor_score": tremor_score[val_idx],
+    }
+    meta_test = {
+        "activity": y_activity_test,
+        "subject": y_subject[test_idx],
+        "base_idx": base_idx[test_idx],
+        "tremor_freq": tremor_freq[test_idx],
+        "tremor_acc_rms": tremor_acc_rms[test_idx],
+        "tremor_gyro_rms": tremor_gyro_rms[test_idx],
+        "tremor_score": tremor_score[test_idx],
+    }
+    
+    return (X_train, X_val, X_test), (meta_train, meta_val, meta_test)
 
 
 def extract_embeddings(model, loader, device):
@@ -118,24 +159,25 @@ def main(sensor_name: str):
     
     # Load data
     print(f"\n[1/4] Loading data...")
-    X_train, y_train, X_val, y_val, X_test, y_test = load_data(sensor_name, num_channels)
+    (X_train, X_val, X_test), (meta_train, meta_val, meta_test) = load_data(sensor_name, num_channels)
     print(f"  Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
     
     # Create data loaders (no shuffling for alignment)
+    # Use activity labels for training (even though we're extracting features for tremor later)
     train_loader = DataLoader(
-        TensorDataset(torch.tensor(X_train), torch.tensor(y_train)),
+        TensorDataset(torch.tensor(X_train), torch.tensor(meta_train["activity"])),
         batch_size=batch_size, shuffle=False
     )
     val_loader = DataLoader(
-        TensorDataset(torch.tensor(X_val), torch.tensor(y_val)),
+        TensorDataset(torch.tensor(X_val), torch.tensor(meta_val["activity"])),
         batch_size=batch_size, shuffle=False
     )
     test_loader = DataLoader(
-        TensorDataset(torch.tensor(X_test), torch.tensor(y_test)),
+        TensorDataset(torch.tensor(X_test), torch.tensor(meta_test["activity"])),
         batch_size=batch_size, shuffle=False
     )
     
-    num_classes = len(np.unique(y_train))
+    num_classes = len(np.unique(meta_train["activity"]))
     
     # Load model
     print(f"\n[2/4] Loading model...")
@@ -158,27 +200,28 @@ def main(sensor_name: str):
     print(f"  Val embeddings:   {Z_val.shape}")
     print(f"  Test embeddings:  {Z_test.shape}")
     
-    # Save features
+    # Save features with tremor-compatible format
     print(f"\n[4/4] Saving features...")
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # Save in tremor-fusion compatible format (matching extract_tremor_embeddings.py output)
     np.savez_compressed(
-        output_dir / f"{sensor_name}_train.npz",
-        embeddings=Z_train,
-        labels=y_train_check
-    )
-    np.savez_compressed(
-        output_dir / f"{sensor_name}_val.npz",
-        embeddings=Z_val,
-        labels=y_val_check
-    )
-    np.savez_compressed(
-        output_dir / f"{sensor_name}_test.npz",
-        embeddings=Z_test,
-        labels=y_test_check
+        output_dir / f"{sensor_name}_embeddings.npz",
+        train_embeddings=Z_train,
+        val_embeddings=Z_val,
+        test_embeddings=Z_test,
+        train_labels=meta_train["tremor_score"],  # For tremor classification
+        val_labels=meta_val["tremor_score"],
+        test_labels=meta_test["tremor_score"],
+        train_activities=meta_train["activity"],  # Keep activity for reference
+        val_activities=meta_val["activity"],
+        test_activities=meta_test["activity"],
+        train_subjects=meta_train["subject"],
+        val_subjects=meta_val["subject"],
+        test_subjects=meta_test["subject"],
     )
     
-    print(f"  ✓ Saved to: {output_dir}")
+    print(f"  ✓ Saved to: {output_dir / f'{sensor_name}_embeddings.npz'}")
     print(f"\n{'='*60}")
     print(f"✓ Feature extraction complete for {sensor_name}")
     print(f"{'='*60}\n")

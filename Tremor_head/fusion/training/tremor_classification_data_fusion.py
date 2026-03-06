@@ -116,8 +116,9 @@ NORMALIZATION_MODE = "clean_only"  # "standard", "none", or "clean_only"
 batch_size = 64
 epochs = 150
 lr = 1e-3
-patience = 50
-min_delta = 1e-5
+weight_decay = 1e-4  # L2 regularization to reduce overfitting
+patience = 12  # Reduced from 20 to stop earlier
+min_delta = 0.001  # Increased from 1e-5 for stricter improvement criterion
 
 # -------------------------------
 # Model architecture
@@ -126,7 +127,7 @@ min_delta = 1e-5
 cnn_filters = [32, 64]  # 2 conv layers for feature extraction
 cnn_kernel_size = 5
 cnn_pool_size = 2
-cnn_dropout = 0.3
+cnn_dropout = 0.4  # Increased from 0.3 to reduce overfitting
 
 # Activity embedding
 activity_embed_dim = 16  # Small embedding for activity (1-12)
@@ -134,7 +135,7 @@ num_activities = 12
 
 # Classification head
 head_hidden_dims = [128, 64]  # Hidden layers before output
-head_dropout = 0.3
+head_dropout = 0.4  # Increased from 0.3 to reduce overfitting
 num_classes = 5  # Scores 0-4
 
 # -------------------------------
@@ -489,13 +490,13 @@ class TremorClassificationCNN(nn.Module):
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
             
             nn.Conv1d(128, 256, kernel_size=5, padding=2),
             nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
         )
         
         # Flattened dimension: (seq_len // 4) * 256 = 25 * 256 = 6400
@@ -592,6 +593,8 @@ def train_epoch(model, loader, criterion, optimizer, device):
     """Train for one epoch."""
     model.train()
     total_loss = 0.0
+    all_preds = []
+    all_targets = []
     
     for X, activity, score in loader:
         X = X.to(device)
@@ -604,9 +607,21 @@ def train_epoch(model, loader, criterion, optimizer, device):
         loss.backward()
         optimizer.step()
         
+        preds = logits.argmax(dim=1)
+        
         total_loss += loss.item() * X.size(0)
+        all_preds.append(preds.cpu().numpy())
+        all_targets.append(score.cpu().numpy())
     
-    return total_loss / len(loader.dataset)
+    # Compute metrics
+    preds = np.concatenate(all_preds)
+    targets = np.concatenate(all_targets)
+    accuracy = accuracy_score(targets, preds)
+    f1_macro = f1_score(targets, preds, average='macro', zero_division=0)
+    
+    avg_loss = total_loss / len(loader.dataset)
+    
+    return avg_loss, accuracy, f1_macro
 
 
 def evaluate(model, loader, criterion, device):
@@ -799,7 +814,10 @@ def main():
             print("Using standard Cross-Entropy")
     print()
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    print(f"Optimizer: Adam (lr={lr}, weight_decay={weight_decay})")
+    print(f"Early stopping: patience={patience}, min_delta={min_delta}")
+    print()
     
     # Plot class distribution
     if SAVE_PLOTS:
@@ -813,12 +831,15 @@ def main():
     # Training loop
     best_val_loss = float('inf')
     best_val_acc = 0.0
+    best_val_f1 = 0.0
     best_epoch = 0
     patience_counter = 0
     best_model_state = None
     best_optimizer_state = None
     history = {
         "train_loss": [],
+        "train_acc": [],
+        "train_f1": [],
         "val_loss": [],
         "val_acc": [],
         "val_f1": []
@@ -826,10 +847,12 @@ def main():
     
     print("Starting training...")
     for epoch in range(epochs):
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss, train_acc, train_f1 = train_epoch(model, train_loader, criterion, optimizer, device)
         val_loss, val_acc, val_f1, _, _ = evaluate(model, val_loader, criterion, device)
         
         history["train_loss"].append(train_loss)
+        history["train_acc"].append(train_acc)
+        history["train_f1"].append(train_f1)
         history["val_loss"].append(val_loss)
         history["val_acc"].append(val_acc)
         history["val_f1"].append(val_f1)
@@ -839,16 +862,17 @@ def main():
               f"Train Loss: {train_loss:.4f} Acc: {train_acc:.3f} F1: {train_f1:.3f} | "
               f"Val Loss: {val_loss:.4f} Acc: {val_acc:.3f} F1: {val_f1:.3f}")
         
-        # Early stopping
-        if val_loss < best_val_loss - min_delta:
+        # Early stopping based on validation F1-score
+        if val_f1 > best_val_f1 + min_delta:
             best_val_loss = val_loss
             best_val_acc = val_acc
+            best_val_f1 = val_f1
             best_epoch = epoch
             patience_counter = 0
             # Save best model state in memory
             best_model_state = model.state_dict().copy()
             best_optimizer_state = optimizer.state_dict().copy()
-            print(f"  → Best model so far")
+            print(f"  → Best model so far (F1: {val_f1:.4f})")
         else:
             patience_counter += 1
         
@@ -939,12 +963,13 @@ def main():
     else:
         best_accs = {}
     
-    # Get previous best
+    # Get previous best F1-score
     if model_key in best_accs:
         if isinstance(best_accs[model_key], dict):
-            previous_best = best_accs[model_key].get("accuracy", 0.0)
+            previous_best = best_accs[model_key].get("f1", 0.0)
         else:
-            previous_best = best_accs[model_key]
+            # Legacy: old format stored accuracy
+            previous_best = best_accs[model_key] if isinstance(best_accs[model_key], (int, float)) else 0.0
     else:
         previous_best = 0.0
     
@@ -952,23 +977,24 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
-    print(f"\nTest Accuracy: {test_acc:.4f}")
-    print(f"Previous Best: {previous_best:.4f}")
+    print(f"\nTest F1: {test_f1:.4f} (Accuracy: {test_acc:.4f})")
+    print(f"Previous Best F1: {previous_best:.4f}")
     
-    is_best = test_acc > previous_best
+    is_best = test_f1 > previous_best
     
     if not is_best:
-        print(f"❌ No improvement. Skipping best model save.")
+        print(f"❌ No improvement in F1-score. Skipping best model save.")
     else:
-        print(f"✅ New best accuracy! Saving best model...")
+        print(f"✅ New best F1-score! Saving best model...")
         
-        # Update best accuracies file
+        # Update best accuracies file (now based on F1)
         best_accs[model_key] = {
-            "accuracy": test_acc,
             "f1": test_f1,
+            "accuracy": test_acc,
             "test_loss": test_loss,
             "val_loss": best_val_loss,
             "val_acc": best_val_acc,
+            "val_f1": best_val_f1,
             "architecture": str(model),
             "total_params": total_params,
             "trainable_params": trainable_params,

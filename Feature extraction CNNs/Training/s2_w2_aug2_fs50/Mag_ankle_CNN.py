@@ -2,12 +2,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, f1_score
 import matplotlib.pyplot as plt
 from pathlib import Path
 import json
 import sys
-from config import parent_dir, variant_dir, seq_len, models_output_dir
+from datetime import datetime
+from config import parent_dir, variant_dirs, seq_len, models_output_dir, load_combined_sensor_data, embeddings_base_dir, embeddings_folder_name
 
 # Get script directory for saving plots
 script_dir = Path(__file__).parent
@@ -15,9 +16,7 @@ script_dir = Path(__file__).parent
 # -------------------------------
 # Config
 # -------------------------------
-file_path = variant_dir / "Mag_ankle.txt"
-split_dir = parent_dir  # Splits are in parent directory
-
+sensor_name = "Mag_ankle"  # Sensor file name without extension
 num_channels = 3
 
 batch_size = 64
@@ -28,15 +27,28 @@ lr = 1e-3
 patience = 10
 min_delta = 1e-4
 
+# Set random seed for reproducibility
+random_seed = np.random.randint(0, 100000)
+torch.manual_seed(random_seed)
+np.random.seed(random_seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(random_seed)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# -------------------------------
-# Load data
-# -------------------------------
-data = np.loadtxt(file_path, delimiter=",")
+print(f"Parent directory: {parent_dir}")
+print(f"Loading combined data from {len(variant_dirs)} variant directories...")
 
-X = data[:, :-1]
-y = data[:, -1].astype(int) - 1  # 1..12 -> 0..11
+# -------------------------------
+# Load combined data from all 3 tremor augmentation folders
+# -------------------------------
+data = load_combined_sensor_data(f"{sensor_name}.txt")
+
+# Data format (tremor-compatible): 
+# [...sensor data...] | [-7] activity | [-6] subject | [-5] base_idx | 
+# [-4] tremor_freq | [-3] tremor_acc_rms | [-2] tremor_gyro_rms | [-1] tremor_score
+X = data[:, :-7]  # Sensor data only (all columns except last 7)
+y = data[:, -7].astype(int) - 1  # Activity label 1..12 -> 0..11
 
 expected_features = num_channels * seq_len
 assert X.shape[1] == expected_features, f"Expected {expected_features} features, got {X.shape[1]}"
@@ -45,19 +57,44 @@ assert y.min() >= 0 and y.max() <= 11, f"Labels out of range: min={y.min()}, max
 X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
 num_classes = len(np.unique(y))
 
+# -------------------------------
+# Generate train/val/test splits (SUBJECT-BASED to prevent data leakage)
+# -------------------------------
+# Extract subject IDs from combined data
+subjects = data[:, -6].astype(int)  # Subject ID is in column -6
 
-# -------------------------------
-# Load fixed split indices (+ sanity checks)
-# -------------------------------
-train_idx = np.loadtxt(split_dir / "train_idx.txt", dtype=int)
-val_idx   = np.loadtxt(split_dir / "val_idx.txt", dtype=int)
-test_idx  = np.loadtxt(split_dir / "test_idx.txt", dtype=int)
+# Define held-out subjects for validation and testing
+TEST_SUBJECTS = [5, 10]
+VAL_SUBJECTS = [2, 7]
+# Train subjects = all others (1, 3, 4, 6, 8, 9)
+
+# Create splits based on subjects
+train_idx = np.where(~np.isin(subjects, TEST_SUBJECTS + VAL_SUBJECTS))[0]
+val_idx = np.where(np.isin(subjects, VAL_SUBJECTS))[0]
+test_idx = np.where(np.isin(subjects, TEST_SUBJECTS))[0]
 
 N = X.shape[0]
-assert train_idx.max() < N and val_idx.max() < N and test_idx.max() < N, "Split indices out of range!"
-assert len(set(train_idx) & set(val_idx)) == 0, "Train/Val overlap!"
-assert len(set(train_idx) & set(test_idx)) == 0, "Train/Test overlap!"
-assert len(set(val_idx) & set(test_idx)) == 0, "Val/Test overlap!"
+print(f"\nSubject-based splits for {N} samples:")
+print(f"  Train: {len(train_idx)} ({len(train_idx)/N*100:.1f}%) - Subjects: {sorted(np.unique(subjects[train_idx]))}")
+print(f"  Val:   {len(val_idx)} ({len(val_idx)/N*100:.1f}%) - Subjects: {VAL_SUBJECTS}")
+print(f"  Test:  {len(test_idx)} ({len(test_idx)/N*100:.1f}%) - Subjects: {TEST_SUBJECTS}")
+
+# Save splits for consistency across sensors
+split_save_dir = script_dir / "splits"
+split_save_dir.mkdir(exist_ok=True)
+
+split_file = split_save_dir / "train_idx.txt"
+if not split_file.exists():
+    np.savetxt(split_save_dir / "train_idx.txt", train_idx, fmt='%d')
+    np.savetxt(split_save_dir / "val_idx.txt", val_idx, fmt='%d')
+    np.savetxt(split_save_dir / "test_idx.txt", test_idx, fmt='%d')
+    print(f"Saved split indices to: {split_save_dir}")
+else:
+    # Load existing splits to ensure consistency across sensors
+    train_idx = np.loadtxt(split_save_dir / "train_idx.txt", dtype=int)
+    val_idx = np.loadtxt(split_save_dir / "val_idx.txt", dtype=int)
+    test_idx = np.loadtxt(split_save_dir / "test_idx.txt", dtype=int)
+    print(f"Loaded existing split indices from: {split_save_dir}")
 
 X_train, y_train = X[train_idx], y[train_idx]
 X_val,   y_val   = X[val_idx],   y[val_idx]
@@ -136,6 +173,8 @@ optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 # -------------------------------
 # Training + Early stopping (with Train+Val loss+acc print)
 # -------------------------------
+best_val_f1 = 0.0
+best_val_acc = 0.0
 best_val_loss = float("inf")
 best_state = None
 epochs_no_improve = 0
@@ -170,6 +209,8 @@ for epoch in range(epochs):
     val_loss_sum = 0.0
     val_correct = 0
     val_total = 0
+    val_preds_all = []
+    val_labels_all = []
 
     with torch.no_grad():
         for xb, yb in val_loader:
@@ -183,23 +224,29 @@ for epoch in range(epochs):
             preds = torch.argmax(logits, dim=1)
             val_correct += (preds == yb).sum().item()
             val_total += xb.size(0)
+            
+            val_preds_all.extend(preds.cpu().numpy())
+            val_labels_all.extend(yb.cpu().numpy())
 
     val_loss = val_loss_sum / val_total
     val_acc = val_correct / val_total
+    val_f1 = f1_score(val_labels_all, val_preds_all, average='weighted', zero_division=0)
 
     print(f"Epoch {epoch+1:3d}/{epochs} | "
           f"Train loss {train_loss:.4f} acc {train_acc:.4f} | "
-          f"Val loss {val_loss:.4f} acc {val_acc:.4f}")
+          f"Val loss {val_loss:.4f} acc {val_acc:.4f} f1 {val_f1:.4f}")
 
-    # ---- Early stopping check (on val loss) ----
-    if val_loss < best_val_loss - min_delta:
+    # ---- Early stopping check (on val F1) ----
+    if val_f1 > best_val_f1 + min_delta:
+        best_val_f1 = val_f1
         best_val_loss = val_loss
+        best_val_acc = val_acc
         best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         epochs_no_improve = 0
     else:
         epochs_no_improve += 1
         if epochs_no_improve >= patience:
-            print(f"\nEarly stopping triggered at epoch {epoch+1}. Best val loss: {best_val_loss:.4f}")
+            print(f"\nEarly stopping triggered at epoch {epoch+1}. Best val F1: {best_val_f1:.4f}")
             break
 
 # Restore best model
@@ -208,95 +255,80 @@ if best_state is not None:
     model.to(device)
 
 # -------------------------------
-# Save feature extractor model
-# -------------------------------
-# Works both as script and in notebook/interactive
-try:
-    script_dir = Path(__file__).parent
-except NameError:
-    script_dir = Path.cwd()
-
-sensor_name = Path(file_path).stem  # "Mag_ankle"
-save_path = models_output_dir / f"feature_extractor_{sensor_name}.pth"
-
-torch.save({
-    "model_state_dict": model.state_dict(),
-    "num_classes": num_classes,
-    "seq_len": seq_len,
-    "num_channels": num_channels,
-    "embedding_dim": model.fc_embed.out_features
-}, save_path)
-
-print(f"Feature extractor saved to:\n{save_path.resolve()}")
-
-# -------------------------------
 # Evaluation on test set
 # -------------------------------
 model.eval()
 y_pred = []
+test_loss_sum = 0.0
+test_total = 0
 
 with torch.no_grad():
-    for xb, _ in test_loader:
+    for xb, yb in test_loader:
         xb = xb.to(device)
+        yb = yb.to(device)
         logits = model(xb)
+        loss = criterion(logits, yb)
+        
+        test_loss_sum += loss.item() * xb.size(0)
+        test_total += xb.size(0)
         y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy())
 
 test_acc = accuracy_score(y_test, y_pred)
+test_f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
+test_loss = test_loss_sum / test_total
 
 # -------------------------------
-# Save accuracy to history
+# Calculate model parameters
 # -------------------------------
-model_key = f"{Path(__file__).parent.name}/{Path(file_path).stem}"
-history_file = Path(__file__).parent.parent.parent.parent / "accuracy_history.json"
+total_params = sum(p.numel() for p in model.parameters())
+trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-# Load and update accuracy history
-if history_file.exists():
-    with open(history_file, 'r') as f:
-        history = json.load(f)
+# -------------------------------
+# Check if this is a new best F1 score
+# -------------------------------
+model_key = f"{Path(__file__).parent.name}/{sensor_name}"
+best_models_file = script_dir / "best_models.json"
+
+# Load existing best models
+if best_models_file.exists():
+    with open(best_models_file, 'r') as f:
+        best_models = json.load(f)
 else:
-    history = {}
+    best_models = {}
 
-if model_key not in history:
-    history[model_key] = []
+previous_best_f1 = best_models.get(model_key, {}).get("f1", 0.0)
+print(f"\nTest F1: {test_f1:.4f} (Accuracy: {test_acc:.4f})")
+print(f"Previous Best F1: {previous_best_f1:.4f}")
 
-history[model_key].append(test_acc)
-
-with open(history_file, 'w') as f:
-    json.dump(history, f, indent=2, sort_keys=True)
-
-# -------------------------------
-# Check if this is a new best accuracy
-# -------------------------------
-best_acc_file = Path(__file__).parent.parent.parent.parent / "best_accuracies.json"
-
-# Load existing best accuracies
-if best_acc_file.exists():
-    with open(best_acc_file, 'r') as f:
-        best_accs = json.load(f)
-else:
-    best_accs = {}
-
-previous_best = best_accs.get(model_key, 0.0)
-print(f"\nTest Accuracy: {test_acc:.4f}")
-print(f"Previous Best: {previous_best:.4f}")
-
-if test_acc <= previous_best:
+if test_f1 <= previous_best_f1:
     print(f"❌ No improvement. Skipping save operations.")
     sys.exit(0)
 
-print(f"✅ New best accuracy! Saving model artifacts...")
+print(f"✅ New best F1! Saving model artifacts...")
 
-# Update best accuracies file
-best_accs[model_key] = test_acc
-with open(best_acc_file, 'w') as f:
-    json.dump(best_accs, f, indent=2, sort_keys=True)
+# Update best models file with all metrics
+best_models[model_key] = {
+    "f1": test_f1,
+    "accuracy": test_acc,
+    "test_loss": test_loss,
+    "val_f1": best_val_f1,
+    "val_acc": best_val_acc,
+    "val_loss": best_val_loss,
+    "random_seed": random_seed,
+    "total_params": total_params,
+    "trainable_params": trainable_params,
+    "architecture": str(model),
+    "timestamp": datetime.now().isoformat()
+}
+
+with open(best_models_file, 'w') as f:
+    json.dump(best_models, f, indent=2, sort_keys=True)
+
+print(f"Saved best model info to: {best_models_file}")
 
 # -------------------------------
 # Save best model (same folder as this script)
 # -------------------------------
-script_dir = Path(__file__).parent
-sensor_name = Path(file_path).stem
-
 save_path = models_output_dir / f"feature_extractor_{sensor_name}.pth"
 
 torch.save({
@@ -349,9 +381,6 @@ current_folder = Path(__file__).parent.name  # e.g., "fs50_s0.5_w2_aug2"
 cm_output_dir = Path("/Users/linaandersson/Desktop/master/Confusion_Matrixes") / current_folder
 cm_output_dir.mkdir(parents=True, exist_ok=True)
 
-# Get sensor name from file path
-sensor_name = Path(file_path).stem  # e.g., "Acc_arm"
-
 # Confusion Matrix (Counts)
 cm = confusion_matrix(y_test, y_pred)
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels_display)
@@ -375,31 +404,115 @@ plt.show()
 # -------------------------------
 # Extract embeddings (features) and save to NPZ
 # -------------------------------
+model.eval()
 def extract_embeddings(loader):
     feats = []
     labs = []
     with torch.no_grad():
         for xb, yb in loader:
             xb = xb.to(device)
-            z = model.extract_features(xb)  # (batch, 128)
+            z = model.extract_features(xb)         # (batch, 32)
             feats.append(z.cpu().numpy())
             labs.append(yb.numpy())
     return np.concatenate(feats, axis=0), np.concatenate(labs, axis=0)
 
-train_Z, train_y = extract_embeddings(train_loader_feat)
-val_Z,   val_y   = extract_embeddings(val_loader_feat)
-test_Z,  test_y  = extract_embeddings(test_loader_feat)
+# Save embeddings for each variant in their respective folders
+print(f"\n📂 Extracting and saving embeddings for each variant...")
 
-feat_dir = variant_dir / "ExtractedFeatures"
-feat_dir.mkdir(parents=True, exist_ok=True)
-feat_path = feat_dir / f"{sensor_name}_embeddings.npz"
-
-np.savez_compressed(
-    feat_path,
-    Z_train=train_Z, y_train=train_y,
-    Z_val=val_Z,     y_val=val_y,
-    Z_test=test_Z,   y_test=test_y
-)
-
-print(f"Saved embeddings to:\n{feat_path.resolve()}")
-print("Embedding shapes:", train_Z.shape, val_Z.shape, test_Z.shape)
+for variant_dir in variant_dirs:
+    variant_name = variant_dir.name
+    
+    # Load data from this specific variant only
+    variant_file = variant_dir / f"{sensor_name}.txt"
+    if not variant_file.exists():
+        print(f"   ⚠️  Skipping {variant_name}: file not found")
+        continue
+    
+    variant_data = np.loadtxt(variant_file, delimiter=",")
+    X_variant = variant_data[:, :-7]  # Sensor data
+    activities_variant = variant_data[:, -7].astype(int) - 1  # Activity (0-11)
+    subjects_variant = variant_data[:, -6].astype(int)  # Subject ID
+    tremor_labels_variant = variant_data[:, -1]  # Tremor score (last column)
+    
+    X_variant = X_variant.reshape(-1, num_channels, seq_len).astype(np.float32)
+    
+    # Create DataLoader (no shuffle to maintain order)
+    X_variant_t = torch.tensor(X_variant, dtype=torch.float32)
+    y_variant_t = torch.tensor(activities_variant, dtype=torch.long)
+    variant_loader = DataLoader(TensorDataset(X_variant_t, y_variant_t), batch_size=batch_size, shuffle=False)
+    
+    # Extract ALL embeddings from this variant
+    Z_variant_all, _ = extract_embeddings(variant_loader)
+    
+    # Generate or load train/val/test splits FOR THIS VARIANT
+    variant_split_dir = variant_dir / "splits"
+    variant_split_dir.mkdir(exist_ok=True)
+    
+    N_variant = len(Z_variant_all)
+    
+    if not (variant_split_dir / "train_idx.txt").exists():
+        # Generate splits for this variant (70/15/15 ratio)
+        indices_variant = np.arange(N_variant)
+        train_idx_var, temp_idx_var = train_test_split(
+            indices_variant, test_size=0.3, random_state=42, stratify=activities_variant
+        )
+        val_idx_var, test_idx_var = train_test_split(
+            temp_idx_var, test_size=0.5, random_state=42, stratify=activities_variant[temp_idx_var]
+        )
+        
+        np.savetxt(variant_split_dir / "train_idx.txt", train_idx_var, fmt='%d')
+        np.savetxt(variant_split_dir / "val_idx.txt", val_idx_var, fmt='%d')
+        np.savetxt(variant_split_dir / "test_idx.txt", test_idx_var, fmt='%d')
+        print(f"   Generated splits for {variant_name}: {len(train_idx_var)}/{len(val_idx_var)}/{len(test_idx_var)}")
+    else:
+        # Load existing splits to ensure consistency across sensors
+        train_idx_var = np.loadtxt(variant_split_dir / "train_idx.txt", dtype=int)
+        val_idx_var = np.loadtxt(variant_split_dir / "val_idx.txt", dtype=int)
+        test_idx_var = np.loadtxt(variant_split_dir / "test_idx.txt", dtype=int)
+        print(f"   Loaded splits for {variant_name}: {len(train_idx_var)}/{len(val_idx_var)}/{len(test_idx_var)}")
+    
+    # Apply splits to this variant's data
+    Z_variant_train = Z_variant_all[train_idx_var]
+    Z_variant_val = Z_variant_all[val_idx_var]
+    Z_variant_test = Z_variant_all[test_idx_var]
+    
+    activities_train = activities_variant[train_idx_var]
+    activities_val = activities_variant[val_idx_var]
+    activities_test = activities_variant[test_idx_var]
+    
+    subjects_train = subjects_variant[train_idx_var]
+    subjects_val = subjects_variant[val_idx_var]
+    subjects_test = subjects_variant[test_idx_var]
+    
+    tremor_train = tremor_labels_variant[train_idx_var]
+    tremor_val = tremor_labels_variant[val_idx_var]
+    tremor_test = tremor_labels_variant[test_idx_var]
+    
+    # Save in variant's embeddings folder with fusion-compatible format (using config settings)
+    # Get corresponding variant directory in embeddings_base_dir
+    embeddings_variant_dir = embeddings_base_dir / variant_name
+    variant_feat_dir = embeddings_variant_dir / embeddings_folder_name
+    variant_feat_dir.mkdir(parents=True, exist_ok=True)
+    variant_feat_path = variant_feat_dir / f"{sensor_name}_embeddings.npz"
+    
+    np.savez_compressed(
+        variant_feat_path,
+        # Embeddings
+        train_embeddings=Z_variant_train,
+        val_embeddings=Z_variant_val,
+        test_embeddings=Z_variant_test,
+        # Tremor labels (for fusion classification)
+        train_labels=tremor_train,
+        val_labels=tremor_val,
+        test_labels=tremor_test,
+        # Activity labels
+        train_activities=activities_train,
+        val_activities=activities_val,
+        test_activities=activities_test,
+        # Subject IDs
+        train_subjects=subjects_train,
+        val_subjects=subjects_val,
+        test_subjects=subjects_test,
+    )
+    
+    print(f"   ✅ {variant_name}: train={Z_variant_train.shape}, val={Z_variant_val.shape}, test={Z_variant_test.shape} → {variant_feat_path}")

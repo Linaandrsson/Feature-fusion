@@ -220,21 +220,21 @@ class AccArmFeatureExtractor(nn.Module):
         
         # CNN feature extractor
         self.features = nn.Sequential(
-            nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
+            nn.Conv1d(num_channels, 64, kernel_size=5, padding=2),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
             
-            nn.Conv1d(128, 256, kernel_size=5, padding=2),
-            nn.BatchNorm1d(256),
+            nn.Conv1d(64, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.3),
         )
         
-        # Flattened dimension: (seq_len // 4) * 256 = 25 * 256 = 6400
-        self.flattened_dim = (seq_len // 4) * 256
+        # Flattened dimension: (seq_len // 4) * 128 = 25 * 128 = 3200
+        self.flattened_dim = (seq_len // 4) * 128
         
         # Combined dimension: CNN features + activity embedding
         combined_dim = self.flattened_dim + activity_embed_dim
@@ -409,6 +409,7 @@ def main():
     
     best_val_loss = float('inf')
     best_val_acc = 0.0
+    best_val_f1 = 0.0
     epochs_no_improve = 0
     best_model_state = None
     best_optimizer_state = None
@@ -438,16 +439,17 @@ def main():
               f"Train Loss: {train_loss:.4f} Acc: {train_acc:.3f} F1: {train_f1:.3f} | "
               f"Val Loss: {val_loss:.4f} Acc: {val_acc:.3f} F1: {val_f1:.3f}")
         
-        # Early stopping - save best model
-        if val_loss < best_val_loss - min_delta:
+        # Early stopping based on validation F1-score
+        if val_f1 > best_val_f1 + min_delta:
             best_val_loss = val_loss
             best_val_acc = val_acc
+            best_val_f1 = val_f1
             best_epoch = epoch
             epochs_no_improve = 0
             # Save best model state in memory
             best_model_state = model.state_dict().copy()
             best_optimizer_state = optimizer.state_dict().copy()
-            print(f"  → Best model so far")
+            print(f"  → Best model so far (F1: {val_f1:.4f})")
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= patience:
@@ -482,7 +484,7 @@ def main():
     # SAVE ACCURACY TO HISTORY (like Feature extraction CNNs)
     # ═══════════════════════════════════════════════════════════════
     model_key = f"{Path(__file__).parent.name}/{SENSOR}"
-    history_file = Path(__file__).parent.parent.parent.parent / "accuracy_history.json"
+    history_file = Path(__file__).parent.parent.parent / "accuracy_history.json"
     
     # Load and update accuracy history
     if history_file.exists():
@@ -504,7 +506,7 @@ def main():
     # ═══════════════════════════════════════════════════════════════
     # CHECK IF THIS IS A NEW BEST ACCURACY
     # ═══════════════════════════════════════════════════════════════
-    best_acc_file = Path(__file__).parent.parent.parent.parent / "best_accuracies.json"
+    best_acc_file = Path(__file__).parent.parent.parent / "best_accuracies.json"
     
     # Load existing best accuracies
     if best_acc_file.exists():
@@ -513,34 +515,40 @@ def main():
     else:
         best_accs = {}
     
-    # Handle old format (just accuracy) vs new format (dict with accuracy and architecture)
+    # Handle old format (just accuracy) vs new format (dict with f1 and accuracy)
     if model_key in best_accs:
         if isinstance(best_accs[model_key], dict):
-            previous_best = best_accs[model_key].get("accuracy", 0.0)
+            previous_best = best_accs[model_key].get("f1", 0.0)
         else:
-            # Old format: just a number
-            previous_best = best_accs[model_key]
+            # Old format: just a number (was accuracy)
+            previous_best = best_accs[model_key] if isinstance(best_accs[model_key], (int, float)) else 0.0
     else:
         previous_best = 0.0
     
-    print(f"\nTest Accuracy: {test_acc:.4f}")
-    print(f"Previous Best: {previous_best:.4f}")
+    print(f"\nTest F1: {test_f1:.4f} (Accuracy: {test_acc:.4f})")
+    print(f"Previous Best F1: {previous_best:.4f}")
     
-    if test_acc <= previous_best:
-        print(f"❌ No improvement. Skipping model save.")
+    if test_f1 <= previous_best:
+        print(f"❌ No improvement in F1-score. Skipping model save.")
         print("\n" + "=" * 80)
         print("TRAINING COMPLETE (no new best)")
         print("=" * 80)
         return
     
-    print(f"✅ New best accuracy! Saving model...")
+    print(f"✅ New best F1-score! Saving model...")
     
     # Get model architecture as string
     model_architecture = str(model)
     
-    # Update best accuracies file with accuracy AND architecture
+    # Update best accuracies file (now based on F1)
     best_accs[model_key] = {
+        "f1": test_f1,
         "accuracy": test_acc,
+        "f1": test_f1,
+        "test_loss": test_loss,
+        "val_loss": best_val_loss,
+        "val_acc": best_val_acc,
+        "val_f1": best_val_f1,
         "architecture": model_architecture,
         "total_params": total_params,
         "trainable_params": trainable_params,

@@ -40,6 +40,55 @@ References:
 import numpy as np
 
 # ============================================================
+# Tremor Policy Configuration
+# ============================================================
+# Defines which sensors should NOT receive tremor in the signal.
+# Tremor-free sensors represent cleaner measurement sites or sensors
+# that are physiologically less affected by Parkinson's tremor.
+#
+# Note: These sensors can still receive alternative augmentations
+# (e.g., AWGN, rotation) at the dataset generation level to avoid duplicates.
+
+TREMOR_FREE_SENSORS = ['Acc_chest', 'ECG']
+
+# Defines which magnetometer sensors use rotation-based tremor modeling
+# (derived from gyroscope tremor) instead of independent additive noise.
+#
+# Physical rationale: Magnetometer tremor is a consequence of tremor-induced
+# orientation changes, not independent additive noise. The gyroscope tremor
+# component drives cumulative rotational perturbations applied to the 
+# magnetometer vector.
+#
+# Both Mag_arm and Mag_ankle follow this physical model:
+# - Mag_arm rotation driven by Gyro_arm tremor
+# - Mag_ankle rotation driven by Gyro_ankle tremor
+
+ROTATION_BASED_MAG_SENSORS = ['Mag_arm', 'Mag_ankle']
+
+# ============================================================
+# Ankle Tremor Scaling
+# ============================================================
+# Ankle tremor is scaled relative to arm tremor using severity-dependent ratios.
+# Lower limbs typically exhibit less tremor than upper limbs in Parkinson's disease.
+#
+# Ratios define ankle tremor as a fraction of arm tremor for each severity score:
+#   - Score 0 (clean): 0% (no tremor)
+#   - Score 1 (mild): 5% of arm tremor
+#   - Score 2 (mild-moderate): 12% of arm tremor
+#   - Score 3 (moderate-severe): 22% of arm tremor
+#   - Score 4 (severe): 35% of arm tremor
+#
+# Applied to both accelerometer and gyroscope ankle tremor targets.
+
+ANKLE_RATIO_BY_SCORE = {
+    0: 0.00,
+    1: 0.05,
+    2: 0.12,
+    3: 0.22,
+    4: 0.35,
+}
+
+# ============================================================
 # A_SUBJECT: Baseline Tremor Severity per Subject
 # ============================================================
 # These values represent the baseline RMS tremor amplitude for accelerometer

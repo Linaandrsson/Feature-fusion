@@ -138,6 +138,83 @@ def add_projected_tremor(X: np.ndarray, s: np.ndarray, v: np.ndarray):
     return X + s[:, None] * v[None, :]
 
 
+def apply_tremor_rotation_to_magnetometer(mag_signal: np.ndarray, gyro_tremor: np.ndarray, fs: float) -> np.ndarray:
+    """
+    Apply tremor-induced rotation to magnetometer signal.
+    
+    Physical model: Magnetometer tremor is modeled as a consequence of tremor-induced 
+    orientation changes, not as independent additive tremor noise. The gyroscope tremor
+    component drives small rotational perturbations that accumulate over time, changing
+    the sensor's orientation relative to Earth's magnetic field.
+    
+    The cumulative rotation is updated at each timestep:
+        R(t) = dR(t) @ R(t-1)
+    where dR(t) is the incremental rotation from gyro_tremor[t] * dt.
+    
+    Args:
+        mag_signal: Original magnetometer signal (L, 3) in original units
+        gyro_tremor: Gyroscope tremor component (L, 3) in deg/s
+        fs: Sampling frequency in Hz
+        
+    Returns:
+        Rotated magnetometer signal (L, 3) with tremor-induced orientation changes
+        
+    Note:
+        - Uses Rodrigues rotation formula for numerical stability
+        - Maintains cumulative orientation over the window
+        - Preserves the baseline magnetometer signal structure
+        - Only applies secondary tremor-induced rotational perturbation
+    """
+    L = mag_signal.shape[0]
+    dt = 1.0 / fs
+    
+    # Initialize output
+    mag_rotated = np.zeros_like(mag_signal)
+    
+    # Convert gyro tremor from deg/s to rad/s
+    gyro_tremor_rad = np.deg2rad(gyro_tremor)
+    
+    # Initialize cumulative rotation as identity
+    R_cumulative = np.eye(3)
+    
+    # For each timestep, update cumulative rotation and apply to magnetometer
+    for t in range(L):
+        # Angular increment at this timestep (rad)
+        # delta_theta = gyro_tremor * dt
+        delta_theta = gyro_tremor_rad[t, :] * dt
+        
+        # Compute incremental rotation matrix using Rodrigues formula
+        angle_norm = np.linalg.norm(delta_theta)
+        
+        if angle_norm < 1e-8:
+            # Negligible rotation, use identity
+            dR = np.eye(3)
+        else:
+            # Rodrigues rotation formula:
+            # R = I + sin(θ)/θ [k]_× + (1-cos(θ))/θ² [k]_×²
+            # where k = θ/||θ|| is the unit rotation axis
+            k = delta_theta / angle_norm
+            
+            # Skew-symmetric cross-product matrix [k]_×
+            K = np.array([
+                [0,    -k[2],  k[1]],
+                [k[2],  0,    -k[0]],
+                [-k[1], k[0],  0]
+            ])
+            
+            # Rodrigues formula
+            dR = np.eye(3) + np.sin(angle_norm) * K + (1 - np.cos(angle_norm)) * (K @ K)
+        
+        # Update cumulative rotation: R = dR @ R
+        # This accumulates orientation changes over time
+        R_cumulative = dR @ R_cumulative
+        
+        # Apply cumulative rotation to original magnetometer vector
+        mag_rotated[t, :] = R_cumulative @ mag_signal[t, :]
+    
+    return mag_rotated
+
+
 def simulate_and_add_tremor_imu(
     X_acc: np.ndarray,   # (N,3)
     X_gyro: np.ndarray,  # (N,3)
@@ -637,8 +714,9 @@ def precompute_tremor_cache_with_parkinson_model(
     # Group windows by body part
     body_parts_to_process = {}
     for w_idx, (subj_idx, label, win_start, win_end) in enumerate(window_specs):
-        # Each window needs tremor for ankle, arm, chest
-        for body_part in ['ankle', 'arm', 'chest']:
+        # Each window needs tremor for arm, ankle, chest
+        # Process arm first so ankle can use its parameters (in interval mode)
+        for body_part in ['arm', 'ankle', 'chest']:
             cache_key = (w_idx, body_part)
             if cache_key not in body_parts_to_process:
                 body_parts_to_process[cache_key] = (subj_idx, label, win_start, win_end)
@@ -692,14 +770,31 @@ def precompute_tremor_cache_with_parkinson_model(
             
         else:  # sampling_method == "interval"
             # Interval-based method: sample parameters per window
-            score, acc_target, freq_hz = pk_config.sample_tremor_params(
-                augment_mode=augment_mode,
-                rng=interval_rng
-            )
-            
-            # Calculate gyroscope RMS from accelerometer RMS
-            k_g = pk_config.choose_kg_from_rms_acc(acc_target)
-            gyro_target = k_g * acc_target
+            # For ankle, use arm's parameters with scaling; otherwise sample new params
+            if body_part == 'ankle':
+                # Ankle is derived from arm tremor for the same window
+                # (arm is always processed first, so it will be in cache)
+                arm_key = (w_idx, 'arm')
+                arm_meta = tremor_cache[arm_key]['meta']
+                score = arm_meta['score']
+                freq_hz = arm_meta['freq_hz']
+                arm_acc_target = arm_meta['acc_target_rms']
+                arm_gyro_target = arm_meta['gyro_target_rms']
+                
+                # Apply ankle scaling
+                ankle_ratio = pk_config.ANKLE_RATIO_BY_SCORE[score]
+                acc_target = arm_acc_target * ankle_ratio
+                gyro_target = arm_gyro_target * ankle_ratio
+            else:
+                # For arm and chest, sample new parameters
+                score, acc_target, freq_hz = pk_config.sample_tremor_params(
+                    augment_mode=augment_mode,
+                    rng=interval_rng
+                )
+                
+                # Calculate gyroscope RMS from accelerometer RMS
+                k_g = pk_config.choose_kg_from_rms_acc(acc_target)
+                gyro_target = k_g * acc_target
             
             mag_target = 0.0  # No magnetometer tremor
         

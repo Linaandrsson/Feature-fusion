@@ -1,0 +1,28 @@
+{
+  "s2_w2_tremor_fs50/Acc_arm": {
+    "accuracy": 0.5858739837398373,
+    "architecture": "AccArmFeatureExtractor(\n  (activity_embed): Embedding(12, 16)\n  (features): Sequential(\n    (0): Conv1d(3, 64, kernel_size=(5,), stride=(1,), padding=(2,))\n    (1): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (2): ReLU()\n    (3): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (4): Dropout(p=0.4, inplace=False)\n    (5): Conv1d(64, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (6): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (7): ReLU()\n    (8): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (9): Dropout(p=0.3, inplace=False)\n  )\n  (flatten): Flatten(start_dim=1, end_dim=-1)\n  (fc_embed): Linear(in_features=3216, out_features=128, bias=True)\n  (drop_cls): Dropout(p=0.5, inplace=False)\n  (fc_cls): Linear(in_features=128, out_features=5, bias=True)\n)",
+    "f1": 0.5528189084794064,
+    "random_seed": 64266,
+    "test_loss": 0.9372751510912373,
+    "timestamp": "2026-03-04T15:49:52.588477",
+    "total_params": 455109,
+    "trainable_params": 455109,
+    "val_acc": 0.5778769841269841,
+    "val_f1": 0.5450154963203223,
+    "val_loss": 0.9577320879325271
+  },
+  "s2_w2_tremor_fs50/Gyro_arm": {
+    "accuracy": 0.6128048780487805,
+    "architecture": "GyroArmFeatureExtractor(\n  (activity_embed): Embedding(12, 16)\n  (features): Sequential(\n    (0): Conv1d(3, 64, kernel_size=(5,), stride=(1,), padding=(2,))\n    (1): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (2): ReLU()\n    (3): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (4): Dropout(p=0.3, inplace=False)\n    (5): Conv1d(64, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (6): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (7): ReLU()\n    (8): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (9): Dropout(p=0.3, inplace=False)\n  )\n  (flatten): Flatten(start_dim=1, end_dim=-1)\n  (fc_embed): Linear(in_features=3216, out_features=128, bias=True)\n  (drop_cls): Dropout(p=0.5, inplace=False)\n  (fc_cls): Linear(in_features=128, out_features=5, bias=True)\n)",
+    "f1": 0.5939347170950638,
+    "random_seed": 56703,
+    "test_loss": 0.7987942083555907,
+    "timestamp": "2026-03-05T11:25:20.296318",
+    "total_params": 455109,
+    "trainable_params": 455109,
+    "val_acc": 0.5962301587301587,
+    "val_f1": 0.6040630852048738,
+    "val_loss": 0.7720827202319924
+  }
+}
