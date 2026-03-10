@@ -215,6 +215,11 @@ def extract_sensor_embeddings(sensor_name: str, model_path: Path, variant_path: 
     # Split by subject
     train_data, val_data, test_data = split_data_by_subject(data, VAL_SUBJECTS, TEST_SUBJECTS)
     
+    # DEBUG: Print subject splits
+    print(f"    DEBUG - Train subjects: {np.unique(train_data['y_subject'])}")
+    print(f"    DEBUG - Val subjects: {np.unique(val_data['y_subject'])}")
+    print(f"    DEBUG - Test subjects: {np.unique(test_data['y_subject'])}")
+    
     # Extract embeddings for each split
     train_embeddings = extract_embeddings(model, train_data["X"], train_data["y_activity"], norm_stats, device)
     val_embeddings = extract_embeddings(model, val_data["X"], val_data["y_activity"], norm_stats, device)

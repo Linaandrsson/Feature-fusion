@@ -15,7 +15,7 @@ script_dir = Path(__file__).parent
 # -------------------------------
 # Config
 # -------------------------------
-sensor_name = "Acc_ankle"  # Sensor file name without extension
+sensor_name = "Acc_chest"  # Sensor file name without extension
 num_channels = 3
 
 batch_size = 64
@@ -82,6 +82,7 @@ else:
     test_idx = np.loadtxt(split_save_dir / "test_idx.txt", dtype=int)
     print(f"Loaded existing split indices from: {split_save_dir}")
 
+# Apply splits
 X_train, y_train = X[train_idx], y[train_idx]
 X_val,   y_val   = X[val_idx],   y[val_idx]
 X_test,  y_test  = X[test_idx],  y[test_idx]
@@ -101,53 +102,46 @@ train_loader = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_
 val_loader   = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False)
 test_loader  = DataLoader(TensorDataset(X_test_t, y_test_t), batch_size=batch_size, shuffle=False)
 
-# ---- Non-shuffled loaders for embedding extraction (important for fusion alignment) ----
-train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=False)
-val_loader_feat   = DataLoader(TensorDataset(X_val_t,   y_val_t),   batch_size=batch_size, shuffle=False)
-test_loader_feat  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=batch_size, shuffle=False)
-
 # -------------------------------
-# CNN Model (same architecture as yours)
+# CNN Model
 # -------------------------------
 class IMUCNN(nn.Module):
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
+           #nn.Conv1d(num_channels, 32, kernel_size=5, padding=2),
+           nn.Conv1d(num_channels, 256, kernel_size=5, padding=2),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.4),
+            nn.Dropout(0.3),
 
-            nn.Conv1d(128, 256, kernel_size=5, padding=2),
-            nn.BatchNorm1d(256),
+           nn.Conv1d(256, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.3),
         )
 
-        self.flattened_dim = (seq_len // 4) * 256 # 256 numbers per sample
+        flattened_dim = (seq_len // 4) * 128 # (seq_len // 4) * channels_out_last_conv
 
-        # Embedding head (128-dim)
         self.flatten = nn.Flatten()
-        self.fc_embed = nn.Linear(self.flattened_dim, 128)
-
-        # Classification head (kept for training/evaluation)
-        self.drop_cls = nn.Dropout(0.5)
+        self.fc_embed = nn.Linear(flattened_dim, 128)
+        self.dropout = nn.Dropout(0.5)
         self.fc_cls = nn.Linear(128, num_classes)
 
     def extract_features(self, x):
-        # Return embedding BEFORE dropout (stable for inference)
+        """Extract embeddings (without final classification layer)"""
         x = self.features(x)
         x = self.flatten(x)
-        z = self.fc_embed(x)  
-        return z
+        x = self.fc_embed(x)
+        return x
 
     def forward(self, x):
-        z = self.extract_features(x)
-        z = self.drop_cls(z)
-        return self.fc_cls(z)
-
+        x = self.extract_features(x)
+        x = self.dropout(x)
+        x = self.fc_cls(x)
+        return x
 
 model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
 criterion = nn.CrossEntropyLoss()
@@ -228,23 +222,6 @@ if best_state is not None:
     model.to(device)
 
 # -------------------------------
-# Save best model to Models/ directory
-# -------------------------------
-save_path = models_output_dir / f"feature_extractor_{sensor_name}.pth"
-
-torch.save({
-    "model_state_dict": model.state_dict(),
-    "num_classes": num_classes,
-    "seq_len": seq_len,
-    "num_channels": num_channels,
-    "embedding_dim": model.fc_embed.out_features
-}, save_path)
-
-print(f"Best model saved to:\n{save_path.resolve()}")
-
-
-
-# -------------------------------
 # Evaluation on test set
 # -------------------------------
 model.eval()
@@ -307,7 +284,7 @@ with open(best_acc_file, 'w') as f:
     json.dump(best_accs, f, indent=2, sort_keys=True)
 
 # -------------------------------
-# Save best model to Models/ directory
+# Save best model (same folder as this script)
 # -------------------------------
 save_path = models_output_dir / f"feature_extractor_{sensor_name}.pth"
 
@@ -357,7 +334,7 @@ if misclassified_indices:
 labels_display = list(range(1, 13))
 
 # Create output directory for confusion matrices
-current_folder = Path(__file__).parent.name  # e.g., "s2_w2_aug2_fs50_mixed_TODO"
+current_folder = Path(__file__).parent.name  # e.g., "fs50_s0.5_w2_aug2"
 cm_output_dir = Path("/Users/linaandersson/Desktop/master/Confusion_Matrixes") / current_folder
 cm_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -391,7 +368,7 @@ def extract_embeddings(loader):
     with torch.no_grad():
         for xb, yb in loader:
             xb = xb.to(device)
-            z = model.extract_features(xb)         # (batch, 128)
+            z = model.extract_features(xb)         # (batch, 32)
             feats.append(z.cpu().numpy())
             labs.append(yb.numpy())
     return np.concatenate(feats, axis=0), np.concatenate(labs, axis=0)
@@ -408,7 +385,8 @@ for variant_dir in variant_dirs:
         print(f"   ⚠️  Skipping {variant_name}: file not found")
         continue
     
-    variant_data = np.loadtxt(variant_file, delimiter=",")
+    # Convert to string to avoid numpy path resolution issues
+    variant_data = np.loadtxt(str(variant_file.resolve()), delimiter=",")
     X_variant = variant_data[:, :-7]  # Sensor data
     activities_variant = variant_data[:, -7].astype(int) - 1  # Activity (0-11)
     subjects_variant = variant_data[:, -6].astype(int)  # Subject ID
@@ -496,5 +474,3 @@ for variant_dir in variant_dirs:
     )
     
     print(f"   ✅ {variant_name}: train={Z_variant_train.shape}, val={Z_variant_val.shape}, test={Z_variant_test.shape} → {variant_feat_path}")
-
-

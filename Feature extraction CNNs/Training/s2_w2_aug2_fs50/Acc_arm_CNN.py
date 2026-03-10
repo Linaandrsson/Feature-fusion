@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, f1_score
+from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from pathlib import Path
 import json
@@ -425,7 +426,8 @@ for variant_dir in variant_dirs:
         print(f"   ⚠️  Skipping {variant_name}: file not found")
         continue
     
-    variant_data = np.loadtxt(variant_file, delimiter=",")
+    # Convert to string to avoid numpy path resolution issues
+    variant_data = np.loadtxt(str(variant_file.resolve()), delimiter=",")
     X_variant = variant_data[:, :-7]  # Sensor data
     activities_variant = variant_data[:, -7].astype(int) - 1  # Activity (0-11)
     subjects_variant = variant_data[:, -6].astype(int)  # Subject ID
@@ -485,8 +487,10 @@ for variant_dir in variant_dirs:
     tremor_val = tremor_labels_variant[val_idx_var]
     tremor_test = tremor_labels_variant[test_idx_var]
     
-    # Save in variant's ExtractedFeatures_ActivityEmb_mixedSet folder with fusion-compatible format
-    variant_feat_dir = variant_dir / "ExtractedFeatures_ActivityEmb_mixedSet"
+    # Save in variant's embeddings folder with fusion-compatible format (using config settings)
+    # Get corresponding variant directory in embeddings_base_dir
+    embeddings_variant_dir = embeddings_base_dir / variant_name
+    variant_feat_dir = embeddings_variant_dir / embeddings_folder_name
     variant_feat_dir.mkdir(parents=True, exist_ok=True)
     variant_feat_path = variant_feat_dir / f"{sensor_name}_embeddings.npz"
     

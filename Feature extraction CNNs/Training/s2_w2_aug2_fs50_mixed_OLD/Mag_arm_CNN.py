@@ -15,7 +15,7 @@ script_dir = Path(__file__).parent
 # -------------------------------
 # Config
 # -------------------------------
-sensor_name = "Acc_chest"  # Sensor file name without extension
+sensor_name = "Mag_arm"  # Sensor file name without extension
 num_channels = 3
 
 batch_size = 64
@@ -82,7 +82,6 @@ else:
     test_idx = np.loadtxt(split_save_dir / "test_idx.txt", dtype=int)
     print(f"Loaded existing split indices from: {split_save_dir}")
 
-# Apply splits
 X_train, y_train = X[train_idx], y[train_idx]
 X_val,   y_val   = X[val_idx],   y[val_idx]
 X_test,  y_test  = X[test_idx],  y[test_idx]
@@ -102,46 +101,56 @@ train_loader = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_
 val_loader   = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False)
 test_loader  = DataLoader(TensorDataset(X_test_t, y_test_t), batch_size=batch_size, shuffle=False)
 
+# ---- Non-shuffled loaders for embedding extraction (important for fusion alignment) ----
+train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=False)
+val_loader_feat   = DataLoader(TensorDataset(X_val_t,   y_val_t),   batch_size=batch_size, shuffle=False)
+test_loader_feat  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=batch_size, shuffle=False)
+
+
 # -------------------------------
-# CNN Model
+# CNN Feature Extractor Model
 # -------------------------------
 class IMUCNN(nn.Module):
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
         super().__init__()
+
+        # Convolutional feature extractor
         self.features = nn.Sequential(
-           #nn.Conv1d(num_channels, 32, kernel_size=5, padding=2),
-           nn.Conv1d(num_channels, 256, kernel_size=5, padding=2),
-            nn.BatchNorm1d(256),
+            nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.3),
 
-           nn.Conv1d(256, 128, kernel_size=5, padding=2),
+            nn.Conv1d(128, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.3),
         )
 
-        flattened_dim = (seq_len // 4) * 128 # (seq_len // 4) * channels_out_last_conv
+        self.flattened_dim = (seq_len // 4) * 128  # seq_len=50 -> 12 * 128 = 1536
 
+        # Embedding head (128-dim)
         self.flatten = nn.Flatten()
-        self.fc_embed = nn.Linear(flattened_dim, 128)
-        self.dropout = nn.Dropout(0.5)
-        self.fc_cls = nn.Linear(128, num_classes)
+        self.fc_embed = nn.Linear(self.flattened_dim, 128)
 
+        # Classification head (kept for training/evaluation)
+        self.drop_cls = nn.Dropout(0.5)
+        self.fc_cls = nn.Linear(128, num_classes)
+        
     def extract_features(self, x):
-        """Extract embeddings (without final classification layer)"""
+        """Return embedding BEFORE dropout (batch, 128)."""
         x = self.features(x)
         x = self.flatten(x)
-        x = self.fc_embed(x)
-        return x
+        z = self.fc_embed(x)
+        return z
 
     def forward(self, x):
-        x = self.extract_features(x)
-        x = self.dropout(x)
-        x = self.fc_cls(x)
-        return x
+        z = self.extract_features(x)
+        z = self.drop_cls(z)
+        logits = self.fc_cls(z)
+        return logits
 
 model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
 criterion = nn.CrossEntropyLoss()
@@ -220,6 +229,22 @@ for epoch in range(epochs):
 if best_state is not None:
     model.load_state_dict(best_state)
     model.to(device)
+
+# -------------------------------
+# Save feature extractor model (same folder as this script)
+# -------------------------------
+save_path = models_output_dir / f"feature_extractor_{sensor_name}.pth"
+
+torch.save({
+    "model_state_dict": model.state_dict(),
+    "num_classes": num_classes,
+    "seq_len": seq_len,
+    "num_channels": num_channels,
+    "embedding_dim": model.fc_embed.out_features
+
+}, save_path)
+
+print(f"Feature extractor saved to:\n{save_path.resolve()}")
 
 # -------------------------------
 # Evaluation on test set
@@ -385,7 +410,8 @@ for variant_dir in variant_dirs:
         print(f"   ⚠️  Skipping {variant_name}: file not found")
         continue
     
-    variant_data = np.loadtxt(variant_file, delimiter=",")
+    # Convert to string to avoid numpy path resolution issues
+    variant_data = np.loadtxt(str(variant_file.resolve()), delimiter=",")
     X_variant = variant_data[:, :-7]  # Sensor data
     activities_variant = variant_data[:, -7].astype(int) - 1  # Activity (0-11)
     subjects_variant = variant_data[:, -6].astype(int)  # Subject ID

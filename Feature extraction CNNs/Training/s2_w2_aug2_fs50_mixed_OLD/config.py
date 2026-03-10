@@ -10,13 +10,14 @@ workspace_root = script_dir.parent.parent.parent  # Go up to workspace root (Tra
 
 # ========================= CHANGE THESE ===========================
 # Dataset configuration - Using Tremor data with all 3 augmentations combined
-dataset_config = "s2_w2"
+dataset_config = "s2_w2" 
 
 # Variant names to combine (all 3 Parkinson tremor augmentations)
+# Format: s{STRIDE}_w{WINDOW}_fs{FS}_tremor_{AUGMENT_MODE}
 variant_names = [
-    "s2_w2_tremor_clean",
-    "s2_w2_tremor_parkinson_mild", 
-    "s2_w2_tremor_parkinson_severe"
+    "s2_w2_fs50_tremor_clean",       # No tremor (100% score=0)
+    "s2_w2_fs50_tremor_mild_mod",    # Mild tremor (50% score=1, 50% score=2)
+    "s2_w2_fs50_tremor_mod_severe"   # Severe tremor (50% score=3, 50% score=4)
 ]
 
 # Sequence length

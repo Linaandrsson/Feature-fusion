@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import json
 import sys
-from config import parent_dir, variant_dirs, seq_len, models_output_dir, load_combined_sensor_data
+from config import parent_dir, variant_dirs, seq_len, models_output_dir, load_combined_sensor_data, embeddings_base_dir, embeddings_folder_name
 
 # Get script directory for saving plots
 script_dir = Path(__file__).parent
@@ -15,8 +15,8 @@ script_dir = Path(__file__).parent
 # -------------------------------
 # Config
 # -------------------------------
-sensor_name = "ECG"  # Sensor file name without extension
-num_channels = 2
+sensor_name = "Acc_ankle"  # Sensor file name without extension
+num_channels = 3
 
 batch_size = 64
 epochs = 200
@@ -106,50 +106,50 @@ train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=b
 val_loader_feat   = DataLoader(TensorDataset(X_val_t,   y_val_t),   batch_size=batch_size, shuffle=False)
 test_loader_feat  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=batch_size, shuffle=False)
 
-
 # -------------------------------
-# CNN Model (same architecture, just num_channels=2)
+# CNN Model (same architecture as yours)
 # -------------------------------
-class ECGCNN(nn.Module):
+class IMUCNN(nn.Module):
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv1d(num_channels, 256, kernel_size=5, padding=2),
-            nn.BatchNorm1d(256),
+            nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
 
-            nn.Conv1d(256, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
+            nn.Conv1d(128, 256, kernel_size=5, padding=2),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.3),
         )
 
-        self.flattened_dim = (seq_len // 4) * 128
+        self.flattened_dim = (seq_len // 4) * 256 # 256 numbers per sample
 
-        # Embedding layer
+        # Embedding head (128-dim)
         self.flatten = nn.Flatten()
         self.fc_embed = nn.Linear(self.flattened_dim, 128)
 
-        # Classification head
+        # Classification head (kept for training/evaluation)
         self.drop_cls = nn.Dropout(0.5)
         self.fc_cls = nn.Linear(128, num_classes)
 
     def extract_features(self, x):
+        # Return embedding BEFORE dropout (stable for inference)
         x = self.features(x)
         x = self.flatten(x)
-        z = self.fc_embed(x)
+        z = self.fc_embed(x)  
         return z
 
     def forward(self, x):
         z = self.extract_features(x)
         z = self.drop_cls(z)
-        logits = self.fc_cls(z)
-        return logits
+        return self.fc_cls(z)
 
-model = ECGCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
+
+model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -228,7 +228,7 @@ if best_state is not None:
     model.to(device)
 
 # -------------------------------
-# Save best model (same folder as this script)
+# Save best model to Models/ directory
 # -------------------------------
 save_path = models_output_dir / f"feature_extractor_{sensor_name}.pth"
 
@@ -240,7 +240,9 @@ torch.save({
     "embedding_dim": model.fc_embed.out_features
 }, save_path)
 
-print(f"Feature extractor saved to:\n{save_path.resolve()}")
+print(f"Best model saved to:\n{save_path.resolve()}")
+
+
 
 # -------------------------------
 # Evaluation on test set
@@ -305,7 +307,7 @@ with open(best_acc_file, 'w') as f:
     json.dump(best_accs, f, indent=2, sort_keys=True)
 
 # -------------------------------
-# Save best model (same folder as this script)
+# Save best model to Models/ directory
 # -------------------------------
 save_path = models_output_dir / f"feature_extractor_{sensor_name}.pth"
 
@@ -355,7 +357,7 @@ if misclassified_indices:
 labels_display = list(range(1, 13))
 
 # Create output directory for confusion matrices
-current_folder = Path(__file__).parent.name  # e.g., "fs50_s0.5_w2_aug2"
+current_folder = Path(__file__).parent.name  # e.g., "s2_w2_aug2_fs50_mixed_TODO"
 cm_output_dir = Path("/Users/linaandersson/Desktop/master/Confusion_Matrixes") / current_folder
 cm_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -389,7 +391,7 @@ def extract_embeddings(loader):
     with torch.no_grad():
         for xb, yb in loader:
             xb = xb.to(device)
-            z = model.extract_features(xb)         # (batch, 32)
+            z = model.extract_features(xb)         # (batch, 128)
             feats.append(z.cpu().numpy())
             labs.append(yb.numpy())
     return np.concatenate(feats, axis=0), np.concatenate(labs, axis=0)
@@ -406,7 +408,8 @@ for variant_dir in variant_dirs:
         print(f"   ⚠️  Skipping {variant_name}: file not found")
         continue
     
-    variant_data = np.loadtxt(variant_file, delimiter=",")
+    # Convert to string to avoid numpy path resolution issues
+    variant_data = np.loadtxt(str(variant_file.resolve()), delimiter=",")
     X_variant = variant_data[:, :-7]  # Sensor data
     activities_variant = variant_data[:, -7].astype(int) - 1  # Activity (0-11)
     subjects_variant = variant_data[:, -6].astype(int)  # Subject ID
@@ -466,8 +469,10 @@ for variant_dir in variant_dirs:
     tremor_val = tremor_labels_variant[val_idx_var]
     tremor_test = tremor_labels_variant[test_idx_var]
     
-    # Save in variant's ExtractedFeatures folder with fusion-compatible format
-    variant_feat_dir = variant_dir / "ExtractedFeatures"
+    # Save in variant's embeddings folder with fusion-compatible format (using config settings)
+    # Get corresponding variant directory in embeddings_base_dir
+    embeddings_variant_dir = embeddings_base_dir / variant_name
+    variant_feat_dir = embeddings_variant_dir / embeddings_folder_name
     variant_feat_dir.mkdir(parents=True, exist_ok=True)
     variant_feat_path = variant_feat_dir / f"{sensor_name}_embeddings.npz"
     
@@ -492,3 +497,5 @@ for variant_dir in variant_dirs:
     )
     
     print(f"   ✅ {variant_name}: train={Z_variant_train.shape}, val={Z_variant_val.shape}, test={Z_variant_test.shape} → {variant_feat_path}")
+
+

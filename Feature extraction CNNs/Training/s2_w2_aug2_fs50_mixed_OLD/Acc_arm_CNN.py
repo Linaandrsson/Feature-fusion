@@ -391,7 +391,8 @@ for variant_dir in variant_dirs:
         print(f"   ⚠️  Skipping {variant_name}: file not found")
         continue
     
-    variant_data = np.loadtxt(variant_file, delimiter=",")
+    # Convert to string to avoid numpy path resolution issues
+    variant_data = np.loadtxt(str(variant_file.resolve()), delimiter=",")
     X_variant = variant_data[:, :-7]  # Sensor data
     activities_variant = variant_data[:, -7].astype(int) - 1  # Activity (0-11)
     subjects_variant = variant_data[:, -6].astype(int)  # Subject ID

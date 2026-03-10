@@ -51,7 +51,7 @@ import Noise_simulation.tremor_parkinson_config as pk_config
 # CONFIG - Basic parameters
 # ============================================================
 ORIGINAL_FS = 50        # original sampling rate in the dataset (Hz)
-FS = 50                 # target sampling rate (Hz)
+FS = 30                 # target sampling rate (Hz)
 WINDOW_SEC = 2.0        # window length in seconds
 STRIDE_SEC = 2.0        # stride in seconds
 AUG_SIZE = 1            # number of augmented copies per window
@@ -515,13 +515,19 @@ def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list,
 # Main Processing
 # ============================================================
 
-def generate_tremor_dataset(variant_name: str):
+def generate_tremor_dataset(variant_name: str, augment_mode: str = None):
     """
     Generate dataset with tremor labels.
     
     Args:
-        variant_name: Name for this dataset variant (e.g., "s1_w2_tremor_clean" or "s1_w2_tremor_subj5")
+        variant_name: Name for this dataset variant (e.g., "s2_w2_fs50_tremor_clean")
+        augment_mode: Tremor augmentation mode ("clean", "mild_mod", "mod_severe")
+                     If None, uses pk_config.DEFAULT_AUGMENT_MODE
     """
+    
+    # Use provided augment_mode or fall back to config default
+    if augment_mode is None:
+        augment_mode = pk_config.DEFAULT_AUGMENT_MODE
     
     print("=" * 80)
     print(f"TREMOR-LABELED DATASET GENERATION: {variant_name}")
@@ -610,7 +616,7 @@ def generate_tremor_dataset(variant_name: str):
             use_jitter=USE_TREMOR_JITTER,
             jitter_std=TREMOR_JITTER_STD if USE_TREMOR_JITTER else 0.0,
             sampling_method=pk_config.DEFAULT_SAMPLING_METHOD,
-            augment_mode=pk_config.DEFAULT_AUGMENT_MODE,
+            augment_mode=augment_mode,
         )
     else:
         # Create dummy cache for clean data
@@ -1006,11 +1012,44 @@ def generate_tremor_dataset(variant_name: str):
 # ============================================================
 
 if __name__ == "__main__":
-    # Example usage:
-    # Set GENERATE_TREMOR at the top of the file (line 61) before running!
+    # Automatically generate all three tremor variants
+    # Format: s{STRIDE}_w{WINDOW}_fs{FS}_tremor_{augment_mode}
     
-    # For clean dataset: Set GENERATE_TREMOR = False, then run:
+    fs_str = f"fs{int(FS)}"
+    base_name = f"s{int(STRIDE_SEC)}_w{int(WINDOW_SEC)}_{fs_str}_tremor"
+    
     if GENERATE_TREMOR:
-        generate_tremor_dataset("s2_w2_tremor_parkinson")
+        # Generate all three tremor variants in one run
+        augment_modes = ["clean", "mild_mod", "mod_severe"]
+        total_variants = len(augment_modes)
+        
+        print("\n" + "="*80)
+        print(f"🔄 GENERATING {total_variants} TREMOR VARIANTS")
+        print("="*80)
+        print(f"Base name: {base_name}_[mode]")
+        print(f"Variants: {', '.join(augment_modes)}")
+        print("="*80 + "\n")
+        
+        for idx, mode in enumerate(augment_modes, 1):
+            print("\n" + "#"*80)
+            print(f"#  VARIANT {idx}/{total_variants}: {mode.upper()}")
+            print("#"*80 + "\n")
+            
+            variant_name = f"{base_name}_{mode}"
+            generate_tremor_dataset(variant_name, augment_mode=mode)
+            
+            print("\n" + "#"*80)
+            print(f"#  ✓ COMPLETED VARIANT {idx}/{total_variants}: {mode.upper()}")
+            print("#"*80 + "\n")
+        
+        print("\n" + "="*80)
+        print(f"✅ ALL {total_variants} TREMOR VARIANTS GENERATED SUCCESSFULLY")
+        print("="*80)
+        print("Generated variants:")
+        for mode in augment_modes:
+            print(f"  ✓ {base_name}_{mode}")
+        print("="*80 + "\n")
     else:
-        generate_tremor_dataset("s2_w2_tremor_clean")
+        # Generate only clean dataset (no tremor)
+        variant_name = f"{base_name}_clean"
+        generate_tremor_dataset(variant_name, augment_mode="clean")

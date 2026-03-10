@@ -2,12 +2,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, f1_score
+from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from pathlib import Path
 import json
 import sys
-from config import parent_dir, variant_dirs, seq_len, models_output_dir, load_combined_sensor_data
+from datetime import datetime
+from config import parent_dir, variant_dirs, seq_len, models_output_dir, load_combined_sensor_data, embeddings_base_dir, embeddings_folder_name
 
 # Get script directory for saving plots
 script_dir = Path(__file__).parent
@@ -18,13 +20,20 @@ script_dir = Path(__file__).parent
 sensor_name = "ECG"  # Sensor file name without extension
 num_channels = 2
 
-batch_size = 64
+batch_size = 128  # Larger batch for better BN statistics
 epochs = 200
-lr = 1e-3
+lr = 5e-4  # Lower learning rate
 
 # Early stopping
-patience = 10
+patience = 15  # More patience for slower learning
 min_delta = 1e-4
+
+# Set random seed for reproducibility
+random_seed = np.random.randint(0, 100000)
+torch.manual_seed(random_seed)
+np.random.seed(random_seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(random_seed)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -50,21 +59,26 @@ X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
 num_classes = len(np.unique(y))
 
 # -------------------------------
-# Generate train/val/test splits for combined data
+# Generate train/val/test splits (SUBJECT-BASED to prevent data leakage)
 # -------------------------------
-from sklearn.model_selection import train_test_split
+# Extract subject IDs from combined data
+subjects = data[:, -6].astype(int)  # Subject ID is in column -6
+
+# Define held-out subjects for validation and testing
+TEST_SUBJECTS = [5, 10]
+VAL_SUBJECTS = [2, 7]
+# Train subjects = all others (1, 3, 4, 6, 8, 9)
+
+# Create splits based on subjects
+train_idx = np.where(~np.isin(subjects, TEST_SUBJECTS + VAL_SUBJECTS))[0]
+val_idx = np.where(np.isin(subjects, VAL_SUBJECTS))[0]
+test_idx = np.where(np.isin(subjects, TEST_SUBJECTS))[0]
 
 N = X.shape[0]
-indices = np.arange(N)
-
-# 70% train, 15% val, 15% test
-train_idx, temp_idx = train_test_split(indices, test_size=0.3, random_state=42, stratify=y)
-val_idx, test_idx = train_test_split(temp_idx, test_size=0.5, random_state=42, stratify=y[temp_idx])
-
-print(f"\nGenerated splits for {N} samples:")
-print(f"  Train: {len(train_idx)} ({len(train_idx)/N*100:.1f}%)")
-print(f"  Val:   {len(val_idx)} ({len(val_idx)/N*100:.1f}%)")
-print(f"  Test:  {len(test_idx)} ({len(test_idx)/N*100:.1f}%)")
+print(f"\nSubject-based splits for {N} samples:")
+print(f"  Train: {len(train_idx)} ({len(train_idx)/N*100:.1f}%) - Subjects: {sorted(np.unique(subjects[train_idx]))}")
+print(f"  Val:   {len(val_idx)} ({len(val_idx)/N*100:.1f}%) - Subjects: {VAL_SUBJECTS}")
+print(f"  Test:  {len(test_idx)} ({len(test_idx)/N*100:.1f}%) - Subjects: {TEST_SUBJECTS}")
 
 # Save splits for consistency across sensors
 split_save_dir = script_dir / "splits"
@@ -114,33 +128,35 @@ class ECGCNN(nn.Module):
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv1d(num_channels, 256, kernel_size=5, padding=2),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Dropout(0.3),
-
-            nn.Conv1d(256, 128, kernel_size=5, padding=2),
+            nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),  # Increased dropout
+
+            nn.Conv1d(128, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Dropout(0.4),  # Increased dropout
         )
 
         self.flattened_dim = (seq_len // 4) * 128
 
-        # Embedding layer
+        # Embedding layer with BatchNorm for better generalization
         self.flatten = nn.Flatten()
         self.fc_embed = nn.Linear(self.flattened_dim, 128)
+        self.bn_embed = nn.BatchNorm1d(128)  # Normalize embeddings
 
         # Classification head
-        self.drop_cls = nn.Dropout(0.5)
+        self.drop_cls = nn.Dropout(0.6)  # Very high dropout
         self.fc_cls = nn.Linear(128, num_classes)
 
     def extract_features(self, x):
         x = self.features(x)
         x = self.flatten(x)
         z = self.fc_embed(x)
+        z = self.bn_embed(z)  # Apply batch normalization
         return z
 
     def forward(self, x):
@@ -153,10 +169,17 @@ model = ECGCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channe
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
+# Learning rate scheduler - reduce on plateau
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer, mode='max', factor=0.5, patience=5
+)
+
 # -------------------------------
-# Training + Early stopping
+# Training + Early stopping (based on F1)
 # -------------------------------
-best_val_loss = float("inf")
+best_val_f1 = 0.0
+best_val_loss = float('inf')
+best_val_acc = 0.0
 best_state = None
 epochs_no_improve = 0
 
@@ -190,6 +213,8 @@ for epoch in range(epochs):
     val_loss_sum = 0.0
     val_correct = 0
     val_total = 0
+    val_preds_all = []
+    val_labels_all = []
 
     with torch.no_grad():
         for xb, yb in val_loader:
@@ -203,24 +228,33 @@ for epoch in range(epochs):
             preds = torch.argmax(logits, dim=1)
             val_correct += (preds == yb).sum().item()
             val_total += xb.size(0)
+            
+            val_preds_all.extend(preds.cpu().numpy())
+            val_labels_all.extend(yb.cpu().numpy())
 
     val_loss = val_loss_sum / val_total
     val_acc = val_correct / val_total
+    val_f1 = f1_score(val_labels_all, val_preds_all, average='weighted', zero_division=0)
 
     print(f"Epoch {epoch+1:3d}/{epochs} | "
           f"Train loss {train_loss:.4f} acc {train_acc:.4f} | "
-          f"Val loss {val_loss:.4f} acc {val_acc:.4f}")
+          f"Val loss {val_loss:.4f} acc {val_acc:.4f} f1 {val_f1:.4f}")
 
-    # ---- Early stopping check (on val loss) ----
-    if val_loss < best_val_loss - min_delta:
+    # ---- Early stopping check (on val F1) ----
+    if val_f1 > best_val_f1 + min_delta:
+        best_val_f1 = val_f1
         best_val_loss = val_loss
+        best_val_acc = val_acc
         best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         epochs_no_improve = 0
     else:
         epochs_no_improve += 1
         if epochs_no_improve >= patience:
-            print(f"\nEarly stopping triggered at epoch {epoch+1}. Best val loss: {best_val_loss:.4f}")
+            print(f"\nEarly stopping triggered at epoch {epoch+1}. Best val F1: {best_val_f1:.4f}")
             break
+    
+    # Step scheduler based on validation F1
+    scheduler.step(val_f1)
 
 # Restore best model
 if best_state is not None:
@@ -228,84 +262,79 @@ if best_state is not None:
     model.to(device)
 
 # -------------------------------
-# Save best model (same folder as this script)
-# -------------------------------
-save_path = models_output_dir / f"feature_extractor_{sensor_name}.pth"
-
-torch.save({
-    "model_state_dict": model.state_dict(),
-    "num_classes": num_classes,
-    "seq_len": seq_len,
-    "num_channels": num_channels,
-    "embedding_dim": model.fc_embed.out_features
-}, save_path)
-
-print(f"Feature extractor saved to:\n{save_path.resolve()}")
-
-# -------------------------------
 # Evaluation on test set
 # -------------------------------
 model.eval()
 y_pred = []
+test_loss_sum = 0.0
+test_total = 0
 
 with torch.no_grad():
-    for xb, _ in test_loader:
+    for xb, yb in test_loader:
         xb = xb.to(device)
+        yb = yb.to(device)
         logits = model(xb)
+        loss = criterion(logits, yb)
+        
+        test_loss_sum += loss.item() * xb.size(0)
+        test_total += xb.size(0)
         y_pred.extend(torch.argmax(logits, dim=1).cpu().numpy())
 
 test_acc = accuracy_score(y_test, y_pred)
+test_f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
+test_loss = test_loss_sum / test_total
 
 # -------------------------------
-# Save accuracy to history
+# Calculate model parameters
+# -------------------------------
+total_params = sum(p.numel() for p in model.parameters())
+trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+# -------------------------------
+# Check if this is a new best F1 score
 # -------------------------------
 model_key = f"{Path(__file__).parent.name}/{sensor_name}"
-history_file = Path(__file__).parent.parent.parent.parent / "accuracy_history.json"
+best_models_file = script_dir / "best_models.json"
 
-# Load and update accuracy history
-if history_file.exists():
-    with open(history_file, 'r') as f:
-        history = json.load(f)
+# Load existing best models
+if best_models_file.exists():
+    with open(best_models_file, 'r') as f:
+        best_models = json.load(f)
 else:
-    history = {}
+    best_models = {}
 
-if model_key not in history:
-    history[model_key] = []
+previous_best_f1 = best_models.get(model_key, {}).get("f1", 0.0)
+print(f"\nTest F1: {test_f1:.4f} (Accuracy: {test_acc:.4f})")
+print(f"Previous Best F1: {previous_best_f1:.4f}")
 
-history[model_key].append(test_acc)
-
-with open(history_file, 'w') as f:
-    json.dump(history, f, indent=2, sort_keys=True)
-
-# -------------------------------
-# Check if this is a new best accuracy
-# -------------------------------
-best_acc_file = Path(__file__).parent.parent.parent.parent / "best_accuracies.json"
-
-# Load existing best accuracies
-if best_acc_file.exists():
-    with open(best_acc_file, 'r') as f:
-        best_accs = json.load(f)
-else:
-    best_accs = {}
-
-previous_best = best_accs.get(model_key, 0.0)
-print(f"\nTest Accuracy: {test_acc:.4f}")
-print(f"Previous Best: {previous_best:.4f}")
-
-if test_acc <= previous_best:
+if test_f1 <= previous_best_f1:
     print(f"❌ No improvement. Skipping save operations.")
     sys.exit(0)
 
-print(f"✅ New best accuracy! Saving model artifacts...")
+print(f"✅ New best F1! Saving model artifacts...")
 
-# Update best accuracies file
-best_accs[model_key] = test_acc
-with open(best_acc_file, 'w') as f:
-    json.dump(best_accs, f, indent=2, sort_keys=True)
+# Update best models file with all metrics
+best_models[model_key] = {
+    "f1": test_f1,
+    "accuracy": test_acc,
+    "test_loss": test_loss,
+    "val_f1": best_val_f1,
+    "val_acc": best_val_acc,
+    "val_loss": best_val_loss,
+    "random_seed": random_seed,
+    "total_params": total_params,
+    "trainable_params": trainable_params,
+    "architecture": str(model),
+    "timestamp": datetime.now().isoformat()
+}
+
+with open(best_models_file, 'w') as f:
+    json.dump(best_models, f, indent=2, sort_keys=True)
+
+print(f"Saved best model info to: {best_models_file}")
 
 # -------------------------------
-# Save best model (same folder as this script)
+# Save best model to Models/ directory
 # -------------------------------
 save_path = models_output_dir / f"feature_extractor_{sensor_name}.pth"
 
@@ -406,7 +435,8 @@ for variant_dir in variant_dirs:
         print(f"   ⚠️  Skipping {variant_name}: file not found")
         continue
     
-    variant_data = np.loadtxt(variant_file, delimiter=",")
+    # Convert to string to avoid numpy path resolution issues
+    variant_data = np.loadtxt(str(variant_file.resolve()), delimiter=",")
     X_variant = variant_data[:, :-7]  # Sensor data
     activities_variant = variant_data[:, -7].astype(int) - 1  # Activity (0-11)
     subjects_variant = variant_data[:, -6].astype(int)  # Subject ID
@@ -466,8 +496,10 @@ for variant_dir in variant_dirs:
     tremor_val = tremor_labels_variant[val_idx_var]
     tremor_test = tremor_labels_variant[test_idx_var]
     
-    # Save in variant's ExtractedFeatures folder with fusion-compatible format
-    variant_feat_dir = variant_dir / "ExtractedFeatures"
+    # Save in variant's embeddings folder with fusion-compatible format (using config settings)
+    # Get corresponding variant directory in embeddings_base_dir
+    embeddings_variant_dir = embeddings_base_dir / variant_name
+    variant_feat_dir = embeddings_variant_dir / embeddings_folder_name
     variant_feat_dir.mkdir(parents=True, exist_ok=True)
     variant_feat_path = variant_feat_dir / f"{sensor_name}_embeddings.npz"
     

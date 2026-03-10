@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import json
 import sys
-from config import parent_dir, variant_dirs, seq_len, models_output_dir, load_combined_sensor_data, embeddings_base_dir, embeddings_folder_name
+from config import parent_dir, variant_dirs, seq_len, models_output_dir, load_combined_sensor_data
 
 # Get script directory for saving plots
 script_dir = Path(__file__).parent
@@ -15,8 +15,8 @@ script_dir = Path(__file__).parent
 # -------------------------------
 # Config
 # -------------------------------
-sensor_name = "Gyro_arm"  # Sensor file name without extension
-num_channels = 3
+sensor_name = "ECG"  # Sensor file name without extension
+num_channels = 2
 
 batch_size = 64
 epochs = 200
@@ -88,18 +88,18 @@ X_test,  y_test  = X[test_idx],  y[test_idx]
 
 print("Split sizes:", len(train_idx), len(val_idx), len(test_idx))
 
-# Torch tensors (explicit dtypes)
+# Torch tensors
 X_train_t = torch.tensor(X_train, dtype=torch.float32)
-X_val_t   = torch.tensor(X_val,   dtype=torch.float32)
-X_test_t  = torch.tensor(X_test,  dtype=torch.float32)
+X_val_t   = torch.tensor(X_val, dtype=torch.float32)
+X_test_t  = torch.tensor(X_test, dtype=torch.float32)
 
 y_train_t = torch.tensor(y_train, dtype=torch.long)
-y_val_t   = torch.tensor(y_val,   dtype=torch.long)
-y_test_t  = torch.tensor(y_test,  dtype=torch.long)
+y_val_t   = torch.tensor(y_val, dtype=torch.long)
+y_test_t  = torch.tensor(y_test, dtype=torch.long)
 
 train_loader = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=True)
-val_loader   = DataLoader(TensorDataset(X_val_t,   y_val_t),   batch_size=batch_size, shuffle=False)
-test_loader  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=batch_size, shuffle=False)
+val_loader   = DataLoader(TensorDataset(X_val_t, y_val_t), batch_size=batch_size, shuffle=False)
+test_loader  = DataLoader(TensorDataset(X_test_t, y_test_t), batch_size=batch_size, shuffle=False)
 
 # ---- Non-shuffled loaders for embedding extraction (important for fusion alignment) ----
 train_loader_feat = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=batch_size, shuffle=False)
@@ -108,12 +108,11 @@ test_loader_feat  = DataLoader(TensorDataset(X_test_t,  y_test_t),  batch_size=b
 
 
 # -------------------------------
-# CNN Feature Extractor Model
+# CNN Model (same architecture, just num_channels=2)
 # -------------------------------
-class IMUCNN(nn.Module):
+class ECGCNN(nn.Module):
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
         super().__init__()
-
         self.features = nn.Sequential(
             nn.Conv1d(num_channels, 256, kernel_size=5, padding=2),
             nn.BatchNorm1d(256),
@@ -125,12 +124,12 @@ class IMUCNN(nn.Module):
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.4),
+            nn.Dropout(0.3),
         )
 
-        self.flattened_dim = (seq_len // 4) * 128  # seq_len=50 -> 12*128 = 1536
+        self.flattened_dim = (seq_len // 4) * 128
 
-        # Embedding head (128-dim)
+        # Embedding layer
         self.flatten = nn.Flatten()
         self.fc_embed = nn.Linear(self.flattened_dim, 128)
 
@@ -139,7 +138,6 @@ class IMUCNN(nn.Module):
         self.fc_cls = nn.Linear(128, num_classes)
 
     def extract_features(self, x):
-        """Return embedding BEFORE dropout (batch, 128)."""
         x = self.features(x)
         x = self.flatten(x)
         z = self.fc_embed(x)
@@ -151,12 +149,12 @@ class IMUCNN(nn.Module):
         logits = self.fc_cls(z)
         return logits
 
-model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
+model = ECGCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 # -------------------------------
-# Training + Early stopping (Train+Val loss+acc print)
+# Training + Early stopping
 # -------------------------------
 best_val_loss = float("inf")
 best_state = None
@@ -228,6 +226,21 @@ for epoch in range(epochs):
 if best_state is not None:
     model.load_state_dict(best_state)
     model.to(device)
+
+# -------------------------------
+# Save best model (same folder as this script)
+# -------------------------------
+save_path = models_output_dir / f"feature_extractor_{sensor_name}.pth"
+
+torch.save({
+    "model_state_dict": model.state_dict(),
+    "num_classes": num_classes,
+    "seq_len": seq_len,
+    "num_channels": num_channels,
+    "embedding_dim": model.fc_embed.out_features
+}, save_path)
+
+print(f"Feature extractor saved to:\n{save_path.resolve()}")
 
 # -------------------------------
 # Evaluation on test set
@@ -393,7 +406,8 @@ for variant_dir in variant_dirs:
         print(f"   ⚠️  Skipping {variant_name}: file not found")
         continue
     
-    variant_data = np.loadtxt(variant_file, delimiter=",")
+    # Convert to string to avoid numpy path resolution issues
+    variant_data = np.loadtxt(str(variant_file.resolve()), delimiter=",")
     X_variant = variant_data[:, :-7]  # Sensor data
     activities_variant = variant_data[:, -7].astype(int) - 1  # Activity (0-11)
     subjects_variant = variant_data[:, -6].astype(int)  # Subject ID
@@ -453,8 +467,8 @@ for variant_dir in variant_dirs:
     tremor_val = tremor_labels_variant[val_idx_var]
     tremor_test = tremor_labels_variant[test_idx_var]
     
-    # Save in variant's ExtractedFeatures_ActivityEmb_mixedSet folder with fusion-compatible format
-    variant_feat_dir = variant_dir / "ExtractedFeatures_ActivityEmb_mixedSet"
+    # Save in variant's ExtractedFeatures folder with fusion-compatible format
+    variant_feat_dir = variant_dir / "ExtractedFeatures"
     variant_feat_dir.mkdir(parents=True, exist_ok=True)
     variant_feat_path = variant_feat_dir / f"{sensor_name}_embeddings.npz"
     
