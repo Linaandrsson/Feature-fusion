@@ -1,0 +1,11 @@
+{
+  "feature_fusion_fs30_tremorEmb_mixedSet": [
+    0.8140243902439024
+  ],
+  "feature_fusion_tremorEmb_acc30_gyro30": [
+    0.804369918699187
+  ],
+  "feature_fusion_tremorEmb_mixedSet": [
+    0.8125
+  ]
+}

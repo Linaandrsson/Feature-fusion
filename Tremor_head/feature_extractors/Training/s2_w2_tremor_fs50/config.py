@@ -12,13 +12,13 @@ workspace_root = script_dir.parent.parent.parent.parent  # Go up to workspace ro
 # Dataset configuration name (stride_window_tremor)
 dataset_config = "s2_w2_tremor"
 
-# Dataset variants to merge (clean + parkinson)
-variant_names = ["s2_w2_tremor_clean", "s2_w2_tremor_parkinson_mild", "s2_w2_tremor_parkinson_severe"]
+# Dataset variants to merge (clean + tremor)
+variant_names = ["s2_w2_fs50_tremor_clean", "s2_w2_fs50_tremor_mild_mod", "s2_w2_fs50_tremor_mod_severe"]
 
 # Model variant name (sampling frequency + dataset mix)
-model_variant = "fs50_mixed"  # fs50 = 50Hz, mixed = clean + mild + severe
+model_variant = "fs50_mixed"  # fs50 = 50Hz, mixed = clean + mild_mod + mod_severe
 
-# Sequence length
+# Sequence length   
 seq_len = 100  # 50Hz * 2s window = 100 samples
 # ====================================================================
 

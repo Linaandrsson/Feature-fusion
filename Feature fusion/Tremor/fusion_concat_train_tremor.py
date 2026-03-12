@@ -103,11 +103,9 @@ head_dropout = 0.4
 # Logging and plotting
 # -------------------------------
 SAVE_PLOTS = True
-PLOT_DIR = Path("gating_plots")
-PLOT_DIR.mkdir(parents=True, exist_ok=True)
-
-LOG_DIR = Path("tremor_logs")
-LOG_DIR.mkdir(exist_ok=True)
+WORKSPACE_ROOT = Path("/Volumes/NO NAME/Master Lina/Code")
+PLOT_DIR = WORKSPACE_ROOT / "gating_plots"
+LOG_DIR = WORKSPACE_ROOT / "tremor_logs"
 LOG_FILE = LOG_DIR / "tremor_feature_fusion_experiments.jsonl"
 
 
@@ -298,6 +296,11 @@ class ConcatFusionModel(nn.Module):
 # ═══════════════════════════════════════════════════════════════
 
 def main():
+    # Set working directory and create directories
+    os.chdir(WORKSPACE_ROOT)
+    PLOT_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    
     print("="*70)
     print("Tremor Fusion Training - Subject-Based Splitting")
     print("="*70)

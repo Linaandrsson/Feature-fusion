@@ -4,11 +4,11 @@ Extract Tremor Embeddings
 
 Extracts 128-dim embeddings from trained Acc_arm and Gyro_arm CNNs.
 
-For each dataset variant (clean, parkinson_mild, parkinson_severe):
-  1. Loads trained models from Tremor_head/feature_extractors/models/
+For each dataset variant (clean, mild_mod, mod_severe):
+  1. Loads trained models from Tremor_head/feature_extractors/Models/
   2. Loads raw sensor data
   3. Extracts embeddings using model.extract_features()
-  4. Saves to: data/Tremor_datagenerator_files/{variant}/ExtractedFeatures/
+  4. Saves to: data/Tremor_datagenerator_files/{variant}/Tremor_ExtractedFeatures/
 
 Output format (NPZ files):
   - {sensor}_embeddings.npz containing:
@@ -34,30 +34,54 @@ from pathlib import Path
 import sys
 from typing import List, Dict, Tuple
 
-# Import model architectures
-sys.path.append(str(Path(__file__).parent.parent / "Training" / "s2_w2_tremor_fs50"))
+
+# ═══════════════════════════════════════════════════════════════
+# CONFIGURATION - CHANGE THESE FOR DIFFERENT SAMPLING FREQUENCIES
+# ═══════════════════════════════════════════════════════════════
+
+# ======================== SELECT SAMPLING FREQUENCY ========================
+# Uncomment ONE of the following configurations:
+
+# --- Option 1: 50Hz sampling (fs50) ---
+# SAMPLING_FREQ = "fs50"
+# TRAINING_SCRIPTS_DIR = "s2_w2_tremor_fs50"
+# SEQ_LEN = 100  # 50Hz * 2s = 100 samples
+
+# --- Option 2: 30Hz sampling (fs30) ---
+SAMPLING_FREQ = "fs50"
+TRAINING_SCRIPTS_DIR = "s2_w2_tremor_fs50"
+SEQ_LEN = 100  # 50Hz * 2s = 100 samples
+
+# ===========================================================================
+
+# Auto-generated paths based on configuration
+WORKSPACE_ROOT = Path("/Volumes/NO NAME/Master Lina/Code")
+DATA_PATH = WORKSPACE_ROOT / "data" / "Tremor_datagenerator_files"
+MODEL_DIR = WORKSPACE_ROOT / "Tremor_head" / "feature_extractors" / "Models" / "s2_w2_tremor" / f"{SAMPLING_FREQ}_mixed"
+
+# Dataset variants (auto-generated based on sampling frequency)
+DATASET_VARIANTS = [
+    f"s2_w2_{SAMPLING_FREQ}_tremor_clean",
+    f"s2_w2_{SAMPLING_FREQ}_tremor_mild_mod",
+    f"s2_w2_{SAMPLING_FREQ}_tremor_mod_severe"
+]
+
+# Sensors and model paths
+SENSORS = {
+    "Acc_arm": MODEL_DIR / "feature_extractor_Acc_arm.pth",
+    "Gyro_arm": MODEL_DIR / "feature_extractor_Gyro_arm.pth"
+}
+
+# Import model architectures from the correct training directory
+sys.path.append(str(WORKSPACE_ROOT / "Tremor_head" / "feature_extractors" / "Training" / TRAINING_SCRIPTS_DIR))
 from train_Acc_arm import AccArmFeatureExtractor
 from train_Gyro_arm import GyroArmFeatureExtractor
 
-
 # ═══════════════════════════════════════════════════════════════
-# CONFIGURATION
+# OTHER CONFIGURATION (usually no need to change)
 # ═══════════════════════════════════════════════════════════════
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Paths
-DATA_PATH = Path("/Volumes/NO NAME/Master Lina/Code/data/Tremor_datagenerator_files")
-MODEL_DIR = Path("Tremor_head/feature_extractors/models")
-
-# Dataset variants to extract embeddings for
-DATASET_VARIANTS = ["s2_w2_tremor_clean", "s2_w2_tremor_parkinson_mild", "s2_w2_tremor_parkinson_severe"]
-
-# Sensors and BEST model paths (only use best models for embedding extraction)
-SENSORS = {
-    "Acc_arm": MODEL_DIR / "acc_arm_best.pth",
-    "Gyro_arm": MODEL_DIR / "gyro_arm_best.pth"
-}
 
 # Split configuration (must match training)
 TEST_SUBJECTS = [5, 10]
@@ -65,7 +89,6 @@ VAL_SUBJECTS = [2, 7]
 
 # Architecture parameters
 num_channels = 3
-seq_len = 100
 batch_size = 64
 
 
@@ -81,15 +104,15 @@ def load_tremor_data(sensor_name: str, dataset_path: Path) -> Dict[str, np.ndarr
         raise FileNotFoundError(f"Dataset not found: {file_path}")
     
     print(f"  Loading {sensor_name}...")
-    data = np.loadtxt(file_path, delimiter=",")
+    data = np.loadtxt(str(file_path), delimiter=",")
     
     # Determine number of channels
     if "ECG" in sensor_name:
         n_channels = 2
-        window_length = 100
+        window_length = SEQ_LEN  # Use configured sequence length
     else:
         n_channels = 3
-        window_length = 100
+        window_length = SEQ_LEN  # Use configured sequence length
     
     # Extract data
     sensor_data = data[:, :n_channels * window_length]
@@ -255,19 +278,31 @@ def extract_sensor_embeddings(sensor_name: str, model_path: Path, variant_path: 
 # ═══════════════════════════════════════════════════════════════
 
 def main():
+    # Ensure valid working directory for numpy
+    import os
+    os.chdir(WORKSPACE_ROOT)
+    
     print("=" * 80)
     print("EXTRACTING TREMOR EMBEDDINGS")
     print("=" * 80)
     
-    # Verify BEST models exist
-    print("\nVerifying BEST trained models...")
-    print("(Embeddings are only extracted from best models to ensure quality)")
+    # Display current configuration
+    print("\nConfiguration:")
+    print(f"  Sampling Frequency: {SAMPLING_FREQ.upper()}")
+    print(f"  Sequence Length: {SEQ_LEN} samples")
+    print(f"  Model Directory: {MODEL_DIR}")
+    print(f"  Dataset Variants: {len(DATASET_VARIANTS)} variants")
+    for variant in DATASET_VARIANTS:
+        print(f"    - {variant}")
+    
+    # Verify trained models exist
+    print("\nVerifying trained models...")
     print()
     for sensor, model_path in SENSORS.items():
         if not model_path.exists():
-            print(f"ERROR: Best model not found for {sensor}: {model_path}")
-            print(f"Please train the model first using train_{sensor.lower()}_extractor.py")
-            print(f"The training script will create {model_path.name} if it achieves best accuracy.")
+            print(f"ERROR: Model not found for {sensor}: {model_path}")
+            print(f"Please train the model first using the training scripts in:")
+            print(f"  Tremor_head/feature_extractors/Training/s2_w2_tremor_fs50/")
             return
         print(f"  ✓ {sensor}: {model_path}")
     
@@ -283,7 +318,7 @@ def main():
             continue
         
         # Create output directory
-        output_dir = variant_path / "ExtractedFeatures_tremorEmb_mixedSet"
+        output_dir = variant_path / "Tremor_ExtractedFeatures"
         output_dir.mkdir(exist_ok=True, parents=True)
         
         # Extract embeddings for each sensor
@@ -299,8 +334,15 @@ def main():
     print("\n" + "=" * 80)
     print("EXTRACTION COMPLETE")
     print("=" * 80)
-    print("\nEmbeddings are ready for feature-level fusion!")
-    print(f"Location: data/Tremor_datagenerator_files/{{variant}}/ExtractedFeatures/")
+    print(f"\nEmbeddings extracted for: {SAMPLING_FREQ.upper()}")
+    print(f"Embeddings are ready for feature-level fusion!")
+    print(f"\nLocation pattern:")
+    print(f"  data/Tremor_datagenerator_files/s2_w2_{SAMPLING_FREQ}_tremor_{{variant}}/Tremor_ExtractedFeatures/")
+    print(f"\nTo extract embeddings for a different sampling frequency:")
+    print(f"  1. Edit the CONFIGURATION section at the top of this file")
+    print(f"  2. Uncomment the desired configuration (fs30 or fs50)")
+    print(f"  3. Comment out the other configuration")
+    print(f"  4. Run this script again")
 
 
 if __name__ == "__main__":

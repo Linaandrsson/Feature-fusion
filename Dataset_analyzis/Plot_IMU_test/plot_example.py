@@ -20,7 +20,7 @@ CSV_PATH = SCRIPT_DIR.parent.parent / "data" / "IMU_tests" / "Tremor_Session1_RW
 
 # Time window settings
 START_TIME = 25.0      # Start time in seconds
-WINDOW_DURATION = 10.0  # Window duration in seconds
+WINDOW_DURATION = 4.0  # Window duration in seconds
 
 # Save plot? (True/False)
 SAVE_PLOT = True

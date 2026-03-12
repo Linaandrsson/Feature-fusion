@@ -36,8 +36,9 @@ from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 # Import configuration
 from config import *
 
-# Sensor name
-SENSOR = "Gyro_arm"
+# Sensor name (using tremorbranch - non-normalized for tremor severity estimation)
+#SENSOR = "Gyro_arm_tremorbranch"
+SENSOR = "Gyro_arm"  
 
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURATION
@@ -80,15 +81,15 @@ def load_tremor_data(sensor_name: str, dataset_path: Path) -> Dict[str, np.ndarr
         raise FileNotFoundError(f"Dataset not found: {file_path}")
     
     print(f"Loading {sensor_name} from {file_path.name}...")
-    data = np.loadtxt(file_path, delimiter=",")
+    data = np.loadtxt(str(file_path), delimiter=",")
     
     # Determine number of channels
     if "ECG" in sensor_name:
         n_channels = 2
-        window_length = 100
+        window_length = seq_len  # Use seq_len from config (100 for fs50)
     else:
         n_channels = 3
-        window_length = 100
+        window_length = seq_len  # Use seq_len from config (100 for fs50)
     
     # Extract data
     sensor_data = data[:, :n_channels * window_length]
@@ -359,7 +360,9 @@ def save_model(model_state, optimizer_state, norm_stats, epoch, val_loss, val_ac
 # MAIN
 # ═══════════════════════════════════════════════════════════════
 
-def main():
+def main():    # Ensure valid working directory for numpy
+    import os
+    os.chdir(DATA_PATH.parent.parent)
     print("=" * 80)
     print("TRAINING ACC_ARM FEATURE EXTRACTOR FOR TREMOR CLASSIFICATION")
     print("=" * 80)
@@ -501,12 +504,12 @@ def main():
     if model_key not in history:
         history[model_key] = []
     
-    history[model_key].append(test_acc)
+    history[model_key].append(test_f1)
     
     with open(history_file, 'w') as f:
         json.dump(history, f, indent=2, sort_keys=True)
     
-    print(f"\nAccuracy added to history: {history_file}")
+    print(f"\nF1-score added to history: {history_file}")
     
     # ═══════════════════════════════════════════════════════════════
     # CHECK IF THIS IS A NEW BEST ACCURACY

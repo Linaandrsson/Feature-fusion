@@ -51,7 +51,7 @@ import Noise_simulation.tremor_parkinson_config as pk_config
 # CONFIG - Basic parameters
 # ============================================================
 ORIGINAL_FS = 50        # original sampling rate in the dataset (Hz)
-FS = 30                 # target sampling rate (Hz)
+FS = 40                 # target sampling rate (Hz)
 WINDOW_SEC = 2.0        # window length in seconds
 STRIDE_SEC = 2.0        # stride in seconds
 AUG_SIZE = 1            # number of augmented copies per window
@@ -317,6 +317,95 @@ def get_sensor_type(sensor_name: str) -> str:
     elif 'ECG' in sensor_name:
         return 'ecg'
     return 'unknown'
+
+
+def save_tremor_branch_sensor(
+    variant_dir: Path,
+    sensor_name: str,
+    X: np.ndarray,
+    y: np.ndarray,
+    subject_ids: np.ndarray,
+    base_window_idx: np.ndarray,
+    tremor_freq: np.ndarray,
+    tremor_acc_rms: np.ndarray,
+    tremor_gyro_rms: np.ndarray,
+    tremor_score: np.ndarray,
+    sensor_cols: List[int],
+    fs: int,
+    window_len: int,
+    stride: int
+) -> None:
+    """
+    Save tremor-branch sensor data (non-normalized, for tremor severity estimation).
+    
+    This saves the same window data as HAR branch but WITHOUT z-score normalization
+    or final augmentation noise, preserving amplitude information needed for tremor
+    severity estimation.
+    
+    Pipeline for tremor-branch data:
+      1. Extract raw window
+      2. Apply tremor/augmentation (same as HAR)
+      3. Resample to target FS (same as HAR)
+      4. SKIP z-score normalization (DIFFERENT from HAR)
+      5. SKIP augment_window noise (DIFFERENT from HAR)
+      
+    Args:
+        variant_dir: Output directory
+        sensor_name: Base sensor name (e.g., "Acc_arm")
+        X: (N, C, L) array of sensor data (NOT normalized)
+        y: (N,) activity labels
+        subject_ids: (N,) subject IDs
+        base_window_idx: (N,) base window indices
+        tremor_freq: (N,) tremor frequencies
+        tremor_acc_rms: (N,) tremor accelerometer RMS
+        tremor_gyro_rms: (N,) tremor gyroscope RMS
+        tremor_score: (N,) tremor severity scores
+        sensor_cols: Original sensor column indices
+        fs: Sampling frequency
+        window_len: Window length in samples
+        stride: Stride in samples
+    """
+    # Create tremor-branch sensor name
+    tremor_branch_name = f"{sensor_name}_tremorbranch"
+    
+    # Save NPZ with tremor labels
+    npz_out = variant_dir / f"{tremor_branch_name}.npz"
+    np.savez_compressed(
+        npz_out,
+        X=X,
+        y=y,
+        subject_id=subject_ids,
+        base_window_idx=base_window_idx,
+        tremor_freq=tremor_freq,
+        tremor_acc_rms=tremor_acc_rms,
+        tremor_gyro_rms=tremor_gyro_rms,
+        tremor_score=tremor_score,
+        fs=fs,
+        window_len=window_len,
+        stride=stride,
+        sensor_name=tremor_branch_name,
+        sensor_cols=np.array(sensor_cols, dtype=np.int64),
+    )
+    
+    # Save TXT with all labels
+    txt_out = variant_dir / f"{tremor_branch_name}.txt"
+    flat_rows = flatten_channel_blocks(X)
+    
+    # Stack all labels as columns
+    all_labels = np.column_stack([
+        (y + 1),              # Activity label (1-indexed)
+        subject_ids,          # Subject ID
+        base_window_idx,      # Base window index
+        tremor_freq,          # Tremor frequency (Hz)
+        tremor_acc_rms,       # Acc RMS (m/s²)
+        tremor_gyro_rms,      # Gyro RMS (deg/s)
+        tremor_score          # Severity score (0-4)
+    ])
+    
+    sensor_txt = np.hstack([flat_rows, all_labels]).astype(np.float32)
+    np.savetxt(txt_out, sensor_txt, delimiter=",", fmt="%.6f")
+    
+    print(f"    ✓ Saved: {npz_out.name}, {txt_out.name} | X={X.shape}, tremor_labels={tremor_freq.shape}")
 
 
 # ============================================================
@@ -862,6 +951,155 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None):
         np.savetxt(txt_out, sensor_txt, delimiter=",", fmt="%.6f")
         
         print(f"    ✓ Saved: {npz_out.name}, {txt_out.name} | X={X.shape}, tremor_labels={tremor_freq.shape}")
+    
+    # -------------------------------
+    # Step 3.5: Generate Tremor-Branch Datasets (Acc_arm, Gyro_arm)
+    # -------------------------------
+    # 
+    # TREMOR-BRANCH vs HAR-BRANCH EXPLANATION:
+    # -----------------------------------------
+    # HAR (Human Activity Recognition) branch:
+    #   - Uses z-score normalization to suppress amplitude variations
+    #   - Benefits activity recognition by making patterns scale-invariant
+    #   - Applies final augmentation noise for robustness
+    #
+    # Tremor-estimation branch:
+    #   - PRESERVES original amplitude information (no z-score normalization)
+    #   - Tremor severity depends on absolute signal magnitude (RMS amplitude)
+    #   - Uses same tremor-corrupted signal as HAR (after tremor/augmentation)
+    #   - Resampled to target FS (for consistency with HAR)
+    #   - NO final augmentation noise (preserves clean amplitude for regression)
+    #
+    # Pipeline comparison:
+    #   HAR:    raw → tremor/aug → resample → z-score → augment_window → save
+    #   Tremor: raw → tremor/aug → resample → save (no normalization, no noise)
+    # 
+    print("\n" + "=" * 80)
+    print("STEP 3.5: Generating Tremor-Branch Datasets (for tremor severity estimation)...")
+    print("=" * 80)
+    print("Note: Tremor-branch datasets preserve amplitude information (no z-score normalization)")
+    print("      This is required for tremor severity estimation based on signal magnitude.")
+    print("")
+    
+    # Define sensors for tremor-branch (only arm IMU)
+    TREMOR_BRANCH_SENSORS = {
+        "Acc_arm": SENSORS["Acc_arm"],
+        "Gyro_arm": SENSORS["Gyro_arm"],
+    }
+    
+    aug_rng_tremor = np.random.default_rng(SEED)  # Use same seed for consistency
+    
+    for sensor_name, cols in TREMOR_BRANCH_SENSORS.items():
+        print(f"\n  Processing tremor-branch: {sensor_name}")
+        
+        X_tremor_list = []
+        y_tremor_list = []
+        subj_tremor_list = []
+        base_idx_tremor_list = []
+        
+        tremor_freq_tremor_list = []
+        tremor_acc_rms_tremor_list = []
+        tremor_gyro_rms_tremor_list = []
+        tremor_score_tremor_list = []
+        
+        sensor_type = get_sensor_type(sensor_name)
+        signal_body_part = extract_body_part(sensor_name)
+        severity_body_part = signal_body_part  # Arm sensors use their own severity
+        
+        # Load all subject data (reuse cache if possible, but create new for safety)
+        subject_data_cache = {}
+        for subj_idx in range(1, NUM_SUBJECTS + 1):
+            fname = DATA_PATH / f"mHealth_subject{subj_idx}.log"
+            if fname.exists():
+                subject_data_cache[subj_idx] = load_subject_data_with_retry(fname)
+        
+        # Process each window (same logic as HAR branch, but stop before z-score normalization)
+        for w_idx, (subj_idx, label, win_start, win_end) in enumerate(window_specs):
+            if subj_idx not in subject_data_cache:
+                continue
+            
+            data = subject_data_cache[subj_idx]
+            
+            # Extract window data
+            win_raw = data[win_start:win_end, cols].copy()
+            
+            # Get severity for augmentation strategy
+            severity_cache_entry = tremor_cache.get((w_idx, severity_body_part))
+            severity_meta = severity_cache_entry.get('meta', {}) if severity_cache_entry else {}
+            tremor_acc_rms_target = severity_meta.get('acc_target_rms', 0.0)
+            tremor_score_val = pk_config.get_tremor_score(tremor_acc_rms_target) if GENERATE_TREMOR else 0
+            
+            # Apply tremor/augmentation (SAME as HAR branch)
+            # Arm sensors are NOT in TREMOR_FREE_SENSORS, so they get actual tremor
+            signal_cache_entry = tremor_cache.get((w_idx, signal_body_part))
+            if signal_cache_entry is not None:
+                if sensor_type in ['acc', 'gyro']:
+                    noise_key = f'{sensor_type}_noise'
+                    tremor_noise = signal_cache_entry[noise_key]
+                    win_raw += tremor_noise
+            
+            # Resample (SAME as HAR branch)
+            win_resampled = resample_window(win_raw, ORIGINAL_FS, FS)
+            
+            # CRITICAL DIFFERENCE: Do NOT apply z-score normalization
+            # Use win_resampled directly (preserves amplitude for tremor severity estimation)
+            win_tremor = win_resampled
+            
+            # Set tremor labels (SAME as HAR branch)
+            signal_cache_entry = tremor_cache.get((w_idx, signal_body_part))
+            if signal_cache_entry is not None and GENERATE_TREMOR:
+                meta = signal_cache_entry['meta']
+                tremor_freq = meta.get('freq_hz', 0.0)
+                tremor_acc_rms = meta.get('acc_target_rms', 0.0)
+                tremor_gyro_rms = meta.get('gyro_target_rms', 0.0)
+                tremor_score = pk_config.get_tremor_score(tremor_acc_rms)
+            else:
+                tremor_freq = 0.0
+                tremor_acc_rms = 0.0
+                tremor_gyro_rms = 0.0
+                tremor_score = 0
+            
+            # NO augmentation copies for tremor branch (AUG_SIZE is skipped)
+            # NO augment_window noise (preserves clean amplitude)
+            # Save only one copy per window
+            X_tremor_list.append(win_tremor.T.astype(np.float32))  # (C, L)
+            y_tremor_list.append(label - 1)                         # 0..11
+            subj_tremor_list.append(subj_idx)
+            base_idx_tremor_list.append(w_idx)
+            
+            tremor_freq_tremor_list.append(tremor_freq)
+            tremor_acc_rms_tremor_list.append(tremor_acc_rms)
+            tremor_gyro_rms_tremor_list.append(tremor_gyro_rms)
+            tremor_score_tremor_list.append(tremor_score)
+        
+        # Stack arrays
+        X_tremor = np.stack(X_tremor_list, axis=0)
+        y_tremor = np.array(y_tremor_list, dtype=np.int64)
+        subject_ids_tremor = np.array(subj_tremor_list, dtype=np.int64)
+        base_window_idx_tremor = np.array(base_idx_tremor_list, dtype=np.int64)
+        
+        tremor_freq_tremor = np.array(tremor_freq_tremor_list, dtype=np.float32)
+        tremor_acc_rms_tremor = np.array(tremor_acc_rms_tremor_list, dtype=np.float32)
+        tremor_gyro_rms_tremor = np.array(tremor_gyro_rms_tremor_list, dtype=np.float32)
+        tremor_score_tremor = np.array(tremor_score_tremor_list, dtype=np.int8)
+        
+        # Save tremor-branch files using helper function
+        save_tremor_branch_sensor(
+            variant_dir=variant_dir,
+            sensor_name=sensor_name,
+            X=X_tremor,
+            y=y_tremor,
+            subject_ids=subject_ids_tremor,
+            base_window_idx=base_window_idx_tremor,
+            tremor_freq=tremor_freq_tremor,
+            tremor_acc_rms=tremor_acc_rms_tremor,
+            tremor_gyro_rms=tremor_gyro_rms_tremor,
+            tremor_score=tremor_score_tremor,
+            sensor_cols=cols,
+            fs=FS,
+            window_len=target_window_len,
+            stride=int(round(STRIDE_SEC * FS))
+        )
     
     # -------------------------------
     # Step 4: Write variant info.txt
