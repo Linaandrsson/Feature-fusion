@@ -393,20 +393,20 @@ BETA_ACTIVITY = {
     # Rest baseline (A is calibrated on rest tremor)
     1: 1.00,  # Standing still
     2: 1.00,  # Sitting and relaxing
-    3: 0.98,  # Lying down (optional slight reduction)
+    3: 1.00,  # Lying down (optional slight reduction)
 
     # Low–moderate intensity movement
-    4: 0.90,  # Walking
-    6: 0.90,  # Waist bends
-    7: 0.80,  # Arm elevation (action condition)
-    8: 0.85,  # Knees bending
-    9: 0.80,  # Cycling
+    4: 0.60,  # Walking
+    6: 0.60,  # Waist bends
+    7: 0.10,  # Arm elevation (action condition)
+    8: 0.60,  # Knees bending
+    9: 0.10,  # Cycling
 
     # Higher motor activation
-    5: 0.75,  # Climbing stairs
-    10: 0.70, # Jogging
-    11: 0.65, # Running
-    12: 0.70, # Jumping
+    5: 0.30,  # Climbing stairs
+    10: 0.30, # Jogging
+    11: 0.20, # Running
+    12: 0.20, # Jumping
 
     0: 1.0,
 }

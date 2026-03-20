@@ -1,0 +1,93 @@
+{
+  "s2_w2_aug2_fs20/Acc_ankle": {
+    "accuracy": 0.7601626016260162,
+    "architecture": "IMUCNN(\n  (features): Sequential(\n    (0): Conv1d(3, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (1): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (2): ReLU()\n    (3): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (4): Dropout(p=0.4, inplace=False)\n    (5): Conv1d(128, 256, kernel_size=(5,), stride=(1,), padding=(2,))\n    (6): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (7): ReLU()\n    (8): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (9): Dropout(p=0.3, inplace=False)\n  )\n  (flatten): Flatten(start_dim=1, end_dim=-1)\n  (fc_embed): Linear(in_features=2560, out_features=128, bias=True)\n  (drop_cls): Dropout(p=0.5, inplace=False)\n  (fc_cls): Linear(in_features=128, out_features=12, bias=True)\n)",
+    "f1": 0.7579233385018253,
+    "random_seed": 42784,
+    "test_loss": 0.5224079162154983,
+    "timestamp": "2026-03-13T12:33:04.825235",
+    "total_params": 496268,
+    "trainable_params": 496268,
+    "val_acc": 0.7083333333333334,
+    "val_f1": 0.7025923307190445,
+    "val_loss": 0.7468031584506943
+  },
+  "s2_w2_aug2_fs20/Acc_arm": {
+    "accuracy": 0.6666666666666666,
+    "architecture": "IMUCNN(\n  (features): Sequential(\n    (0): Conv1d(3, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (1): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (2): ReLU()\n    (3): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (4): Dropout(p=0.3, inplace=False)\n    (5): Conv1d(128, 256, kernel_size=(5,), stride=(1,), padding=(2,))\n    (6): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (7): ReLU()\n    (8): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (9): Dropout(p=0.3, inplace=False)\n  )\n  (flatten): Flatten(start_dim=1, end_dim=-1)\n  (fc_embed): Linear(in_features=2560, out_features=128, bias=True)\n  (drop_cls): Dropout(p=0.5, inplace=False)\n  (fc_cls): Linear(in_features=128, out_features=12, bias=True)\n)",
+    "f1": 0.6691428977320355,
+    "random_seed": 28216,
+    "test_loss": 0.8680754254261652,
+    "timestamp": "2026-03-13T12:34:55.983285",
+    "total_params": 496268,
+    "trainable_params": 496268,
+    "val_acc": 0.6349206349206349,
+    "val_f1": 0.6331869009185589,
+    "val_loss": 1.1667849019406333
+  },
+  "s2_w2_aug2_fs20/ECG": {
+    "accuracy": 0.29115853658536583,
+    "architecture": "ECGCNN(\n  (features): Sequential(\n    (0): Conv1d(2, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (1): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (2): ReLU()\n    (3): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (4): Dropout(p=0.4, inplace=False)\n    (5): Conv1d(128, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (6): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (7): ReLU()\n    (8): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (9): Dropout(p=0.4, inplace=False)\n  )\n  (flatten): Flatten(start_dim=1, end_dim=-1)\n  (fc_embed): Linear(in_features=1280, out_features=128, bias=True)\n  (bn_embed): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n  (drop_cls): Dropout(p=0.6, inplace=False)\n  (fc_cls): Linear(in_features=128, out_features=12, bias=True)\n)",
+    "f1": 0.2631919823788099,
+    "random_seed": 13322,
+    "test_loss": 2.134454297825573,
+    "timestamp": "2026-03-13T12:36:36.083687",
+    "total_params": 249740,
+    "trainable_params": 249740,
+    "val_acc": 0.35813492063492064,
+    "val_f1": 0.342978871968085,
+    "val_loss": 1.9059842787091694
+  },
+  "s2_w2_aug2_fs20/Gyro_ankle": {
+    "accuracy": 0.5071138211382114,
+    "architecture": "IMUCNN(\n  (features): Sequential(\n    (0): Conv1d(3, 256, kernel_size=(5,), stride=(1,), padding=(2,))\n    (1): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (2): ReLU()\n    (3): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (4): Dropout(p=0.3, inplace=False)\n    (5): Conv1d(256, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (6): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (7): ReLU()\n    (8): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (9): Dropout(p=0.3, inplace=False)\n  )\n  (flatten): Flatten(start_dim=1, end_dim=-1)\n  (fc_embed): Linear(in_features=1280, out_features=128, bias=True)\n  (drop_cls): Dropout(p=0.5, inplace=False)\n  (fc_cls): Linear(in_features=128, out_features=12, bias=True)\n)",
+    "f1": 0.5239570358183548,
+    "random_seed": 77388,
+    "test_loss": 1.3569539506745532,
+    "timestamp": "2026-03-13T12:38:52.392901",
+    "total_params": 334348,
+    "trainable_params": 334348,
+    "val_acc": 0.45634920634920634,
+    "val_f1": 0.4771527234929953,
+    "val_loss": 1.4935007592042286
+  },
+  "s2_w2_aug2_fs20/Gyro_arm": {
+    "accuracy": 0.2860772357723577,
+    "architecture": "IMUCNN(\n  (features): Sequential(\n    (0): Conv1d(3, 256, kernel_size=(5,), stride=(1,), padding=(2,))\n    (1): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (2): ReLU()\n    (3): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (4): Dropout(p=0.3, inplace=False)\n    (5): Conv1d(256, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (6): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (7): ReLU()\n    (8): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (9): Dropout(p=0.4, inplace=False)\n  )\n  (flatten): Flatten(start_dim=1, end_dim=-1)\n  (fc_embed): Linear(in_features=1280, out_features=128, bias=True)\n  (drop_cls): Dropout(p=0.5, inplace=False)\n  (fc_cls): Linear(in_features=128, out_features=12, bias=True)\n)",
+    "f1": 0.2820973123863476,
+    "random_seed": 76884,
+    "test_loss": 1.9184792177463934,
+    "timestamp": "2026-03-13T12:41:02.570171",
+    "total_params": 334348,
+    "trainable_params": 334348,
+    "val_acc": 0.28174603174603174,
+    "val_f1": 0.27371024097208363,
+    "val_loss": 2.0604537914669705
+  },
+  "s2_w2_aug2_fs20/Mag_ankle": {
+    "accuracy": 0.6398373983739838,
+    "architecture": "IMUCNN(\n  (features): Sequential(\n    (0): Conv1d(3, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (1): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (2): ReLU()\n    (3): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (4): Dropout(p=0.3, inplace=False)\n    (5): Conv1d(128, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (6): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (7): ReLU()\n    (8): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (9): Dropout(p=0.3, inplace=False)\n  )\n  (flatten): Flatten(start_dim=1, end_dim=-1)\n  (fc_embed): Linear(in_features=1280, out_features=128, bias=True)\n  (drop_cls): Dropout(p=0.5, inplace=False)\n  (fc_cls): Linear(in_features=128, out_features=12, bias=True)\n)",
+    "f1": 0.6374270408486643,
+    "random_seed": 26536,
+    "test_loss": 1.0414255344710215,
+    "timestamp": "2026-03-13T12:42:53.536401",
+    "total_params": 250124,
+    "trainable_params": 250124,
+    "val_acc": 0.7410714285714286,
+    "val_f1": 0.7357850252337843,
+    "val_loss": 0.9082657481942858
+  },
+  "s2_w2_aug2_fs20/Mag_arm": {
+    "accuracy": 0.6641260162601627,
+    "architecture": "IMUCNN(\n  (features): Sequential(\n    (0): Conv1d(3, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (1): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (2): ReLU()\n    (3): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (4): Dropout(p=0.3, inplace=False)\n    (5): Conv1d(128, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (6): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (7): ReLU()\n    (8): MaxPool1d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)\n    (9): Dropout(p=0.3, inplace=False)\n  )\n  (flatten): Flatten(start_dim=1, end_dim=-1)\n  (fc_embed): Linear(in_features=1280, out_features=128, bias=True)\n  (drop_cls): Dropout(p=0.5, inplace=False)\n  (fc_cls): Linear(in_features=128, out_features=12, bias=True)\n)",
+    "f1": 0.6640395506868083,
+    "random_seed": 53435,
+    "test_loss": 1.2282829274976157,
+    "timestamp": "2026-03-13T12:45:50.786261",
+    "total_params": 250124,
+    "trainable_params": 250124,
+    "val_acc": 0.6537698412698413,
+    "val_f1": 0.6251694813085823,
+    "val_loss": 1.4338085061264416
+  }
+}

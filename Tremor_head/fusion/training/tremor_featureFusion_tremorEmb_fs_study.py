@@ -41,7 +41,7 @@ from sklearn.metrics import accuracy_score, f1_score
 # -------------------------------
 # Reproducibility
 # -------------------------------
-SEED = 42
+SEED = 41
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)

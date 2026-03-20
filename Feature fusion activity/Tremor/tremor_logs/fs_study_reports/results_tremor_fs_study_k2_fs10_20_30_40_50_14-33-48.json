@@ -1,0 +1,1685 @@
+{
+  "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+  "metadata": {
+    "sensors": [
+      "Acc_ankle",
+      "Mag_arm"
+    ],
+    "fusion_mode": "gated",
+    "embeddings_folder": "Activity_ExtractedFeatures",
+    "tremor_types_merged": [
+      "tremor_clean",
+      "tremor_mild_mod",
+      "tremor_mod_severe"
+    ],
+    "subject_split": {
+      "train_subjects": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9
+      ],
+      "val_subjects": [
+        2,
+        7
+      ],
+      "test_subjects": [
+        5,
+        10
+      ]
+    },
+    "seed": 42,
+    "run_timestamp": "2026-03-13_14-33-48",
+    "total_combinations": 25
+  },
+  "statistics": {
+    "test_f1": {
+      "mean": 0.8794753706826783,
+      "max": 0.8975851087548142,
+      "min": 0.8438723513675804,
+      "range": 0.0537127573872338
+    },
+    "test_accuracy": {
+      "mean": 0.8802235772357723,
+      "max": 0.8988821138211383,
+      "min": 0.8440040650406504,
+      "range": 0.054878048780487854
+    },
+    "val_f1": {
+      "mean": 0.8384718923885238,
+      "max": 0.8726873996795054,
+      "min": 0.7774331405236443,
+      "range": 0.09525425915586105
+    },
+    "val_accuracy": {
+      "mean": 0.841547619047619,
+      "max": 0.875,
+      "min": 0.7797619047619048,
+      "range": 0.09523809523809523
+    }
+  },
+  "best_combination": {
+    "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+    "fs_combo_hash": "9a06f0bd",
+    "run_timestamp": "2026-03-13_14-33-48",
+    "sensors": [
+      "Acc_ankle",
+      "Mag_arm"
+    ],
+    "fs_map": {
+      "Acc_ankle": 20,
+      "Mag_arm": 50
+    },
+    "fusion_mode": "gated",
+    "embeddings_folder": "Activity_ExtractedFeatures",
+    "tremor_types_merged": [
+      "tremor_clean",
+      "tremor_mild_mod",
+      "tremor_mod_severe"
+    ],
+    "subject_split": {
+      "train_subjects": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9
+      ],
+      "val_subjects": [
+        2,
+        7
+      ],
+      "test_subjects": [
+        5,
+        10
+      ]
+    },
+    "val_loss": 0.45155111239069984,
+    "val_accuracy": 0.8556547619047619,
+    "val_f1": 0.8520216422978505,
+    "val_f1_macro": 0.8573598727061627,
+    "val_f1_weighted": 0.8520216422978505,
+    "test_loss": 0.3291260205148681,
+    "test_accuracy": 0.8988821138211383,
+    "test_f1": 0.8975851087548142,
+    "test_f1_macro": 0.9040984369982983,
+    "test_f1_weighted": 0.8975851087548142,
+    "gate_mean": {
+      "Acc_ankle": 0.9820351004600525,
+      "Mag_arm": 0.9983906149864197
+    },
+    "gate_std": {
+      "Acc_ankle": 0.03520376980304718,
+      "Mag_arm": 0.0029344537761062384
+    },
+    "num_train": 5955,
+    "num_val": 2016,
+    "num_test": 1968,
+    "seed": 42
+  },
+  "worst_combination": {
+    "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+    "fs_combo_hash": "6c2c0a2b",
+    "run_timestamp": "2026-03-13_14-33-48",
+    "sensors": [
+      "Acc_ankle",
+      "Mag_arm"
+    ],
+    "fs_map": {
+      "Acc_ankle": 10,
+      "Mag_arm": 10
+    },
+    "fusion_mode": "gated",
+    "embeddings_folder": "Activity_ExtractedFeatures",
+    "tremor_types_merged": [
+      "tremor_clean",
+      "tremor_mild_mod",
+      "tremor_mod_severe"
+    ],
+    "subject_split": {
+      "train_subjects": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9
+      ],
+      "val_subjects": [
+        2,
+        7
+      ],
+      "test_subjects": [
+        5,
+        10
+      ]
+    },
+    "val_loss": 1.1511170163987174,
+    "val_accuracy": 0.7797619047619048,
+    "val_f1": 0.7774331405236443,
+    "val_f1_macro": 0.7829249207676332,
+    "val_f1_weighted": 0.7774331405236443,
+    "test_loss": 0.7420943650772901,
+    "test_accuracy": 0.8440040650406504,
+    "test_f1": 0.8438723513675804,
+    "test_f1_macro": 0.849692724526209,
+    "test_f1_weighted": 0.8438723513675804,
+    "gate_mean": {
+      "Acc_ankle": 0.9884177446365356,
+      "Mag_arm": 0.989413857460022
+    },
+    "gate_std": {
+      "Acc_ankle": 0.03137587010860443,
+      "Mag_arm": 0.017108939588069916
+    },
+    "num_train": 5955,
+    "num_val": 2016,
+    "num_test": 1968,
+    "seed": 42
+  },
+  "ranked_results": [
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "9a06f0bd",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 20,
+        "Mag_arm": 50
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.45155111239069984,
+      "val_accuracy": 0.8556547619047619,
+      "val_f1": 0.8520216422978505,
+      "val_f1_macro": 0.8573598727061627,
+      "val_f1_weighted": 0.8520216422978505,
+      "test_loss": 0.3291260205148681,
+      "test_accuracy": 0.8988821138211383,
+      "test_f1": 0.8975851087548142,
+      "test_f1_macro": 0.9040984369982983,
+      "test_f1_weighted": 0.8975851087548142,
+      "gate_mean": {
+        "Acc_ankle": 0.9820351004600525,
+        "Mag_arm": 0.9983906149864197
+      },
+      "gate_std": {
+        "Acc_ankle": 0.03520376980304718,
+        "Mag_arm": 0.0029344537761062384
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "7532502d",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 10,
+        "Mag_arm": 50
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.8454676573238675,
+      "val_accuracy": 0.8318452380952381,
+      "val_f1": 0.8270909565464019,
+      "val_f1_macro": 0.8308539059893492,
+      "val_f1_weighted": 0.8270909565464019,
+      "test_loss": 0.4269038378223171,
+      "test_accuracy": 0.896849593495935,
+      "test_f1": 0.8963076509778766,
+      "test_f1_macro": 0.9033998073756454,
+      "test_f1_weighted": 0.8963076509778766,
+      "gate_mean": {
+        "Acc_ankle": 0.9945878386497498,
+        "Mag_arm": 0.994918704032898
+      },
+      "gate_std": {
+        "Acc_ankle": 0.01240515522658825,
+        "Mag_arm": 0.013290631584823132
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "c5277c34",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 30,
+        "Mag_arm": 50
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.4088222247267526,
+      "val_accuracy": 0.8586309523809523,
+      "val_f1": 0.8561270934957921,
+      "val_f1_macro": 0.8627567094973791,
+      "val_f1_weighted": 0.8561270934957921,
+      "test_loss": 0.30657980136755036,
+      "test_accuracy": 0.8973577235772358,
+      "test_f1": 0.8955810604721582,
+      "test_f1_macro": 0.9030451984466673,
+      "test_f1_weighted": 0.8955810604721582,
+      "gate_mean": {
+        "Acc_ankle": 0.9990224242210388,
+        "Mag_arm": 0.9979361891746521
+      },
+      "gate_std": {
+        "Acc_ankle": 0.0011231610551476479,
+        "Mag_arm": 0.002574365586042404
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "9e41149d",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 40,
+        "Mag_arm": 30
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.8733991639954704,
+      "val_accuracy": 0.8705357142857143,
+      "val_f1": 0.8683162311922418,
+      "val_f1_macro": 0.873009629903985,
+      "val_f1_weighted": 0.8683162311922418,
+      "test_loss": 0.7515858087113233,
+      "test_accuracy": 0.8917682926829268,
+      "test_f1": 0.8918930644144913,
+      "test_f1_macro": 0.8995169379273166,
+      "test_f1_weighted": 0.8918930644144913,
+      "gate_mean": {
+        "Acc_ankle": 0.842660665512085,
+        "Mag_arm": 0.8744423985481262
+      },
+      "gate_std": {
+        "Acc_ankle": 0.21279248595237732,
+        "Mag_arm": 0.1457447111606598
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "4141e2f6",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 40,
+        "Mag_arm": 50
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.8816612116874211,
+      "val_accuracy": 0.8705357142857143,
+      "val_f1": 0.8654710527584215,
+      "val_f1_macro": 0.8730842336140058,
+      "val_f1_weighted": 0.8654710527584215,
+      "test_loss": 0.8164751340703267,
+      "test_accuracy": 0.8943089430894309,
+      "test_f1": 0.8916708467520712,
+      "test_f1_macro": 0.8968575496905168,
+      "test_f1_weighted": 0.8916708467520712,
+      "gate_mean": {
+        "Acc_ankle": 0.8715894818305969,
+        "Mag_arm": 0.8933664560317993
+      },
+      "gate_std": {
+        "Acc_ankle": 0.1840508133172989,
+        "Mag_arm": 0.12289969623088837
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "98655b1a",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 10,
+        "Mag_arm": 30
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 1.3186714838421534,
+      "val_accuracy": 0.8373015873015873,
+      "val_f1": 0.8338534925394954,
+      "val_f1_macro": 0.8418228924491921,
+      "val_f1_weighted": 0.8338534925394954,
+      "test_loss": 0.8436261495439018,
+      "test_accuracy": 0.891260162601626,
+      "test_f1": 0.8911573926059082,
+      "test_f1_macro": 0.8982909662414315,
+      "test_f1_weighted": 0.8911573926059082,
+      "gate_mean": {
+        "Acc_ankle": 0.8275019526481628,
+        "Mag_arm": 0.8639568090438843
+      },
+      "gate_std": {
+        "Acc_ankle": 0.19526264071464539,
+        "Mag_arm": 0.16005539894104004
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "d425a857",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 30,
+        "Mag_arm": 30
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.7011639135224479,
+      "val_accuracy": 0.875,
+      "val_f1": 0.8726873996795054,
+      "val_f1_macro": 0.8790615804385906,
+      "val_f1_weighted": 0.8726873996795054,
+      "test_loss": 0.6593189913082899,
+      "test_accuracy": 0.8902439024390244,
+      "test_f1": 0.8900976471288762,
+      "test_f1_macro": 0.8977768758088877,
+      "test_f1_weighted": 0.8900976471288762,
+      "gate_mean": {
+        "Acc_ankle": 0.8675192594528198,
+        "Mag_arm": 0.8380430340766907
+      },
+      "gate_std": {
+        "Acc_ankle": 0.18141664564609528,
+        "Mag_arm": 0.17274802923202515
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "0cd0da83",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 50,
+        "Mag_arm": 40
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.8407303416539752,
+      "val_accuracy": 0.8645833333333334,
+      "val_f1": 0.8602400151053924,
+      "val_f1_macro": 0.8623650972103789,
+      "val_f1_weighted": 0.8602400151053924,
+      "test_loss": 0.8773311710939175,
+      "test_accuracy": 0.8892276422764228,
+      "test_f1": 0.888804420943362,
+      "test_f1_macro": 0.896705302026637,
+      "test_f1_weighted": 0.888804420943362,
+      "gate_mean": {
+        "Acc_ankle": 0.9002286195755005,
+        "Mag_arm": 0.9441037178039551
+      },
+      "gate_std": {
+        "Acc_ankle": 0.1306203454732895,
+        "Mag_arm": 0.09049352258443832
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "57b8a8ad",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 50,
+        "Mag_arm": 30
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.7746052789309669,
+      "val_accuracy": 0.8675595238095238,
+      "val_f1": 0.8653108486605161,
+      "val_f1_macro": 0.8729878591105936,
+      "val_f1_weighted": 0.8653108486605161,
+      "test_loss": 0.6904592073060632,
+      "test_accuracy": 0.8882113821138211,
+      "test_f1": 0.8879267925216198,
+      "test_f1_macro": 0.8964261875568807,
+      "test_f1_weighted": 0.8879267925216198,
+      "gate_mean": {
+        "Acc_ankle": 0.9219557642936707,
+        "Mag_arm": 0.905956506729126
+      },
+      "gate_std": {
+        "Acc_ankle": 0.15041372179985046,
+        "Mag_arm": 0.1037931889295578
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "8fab185e",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 10,
+        "Mag_arm": 40
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.7402231276981415,
+      "val_accuracy": 0.8333333333333334,
+      "val_f1": 0.8260470231053698,
+      "val_f1_macro": 0.835116896261558,
+      "val_f1_weighted": 0.8260470231053698,
+      "test_loss": 0.4685692835629471,
+      "test_accuracy": 0.8892276422764228,
+      "test_f1": 0.8873200545606441,
+      "test_f1_macro": 0.8947235964713568,
+      "test_f1_weighted": 0.8873200545606441,
+      "gate_mean": {
+        "Acc_ankle": 0.9977476596832275,
+        "Mag_arm": 0.9946415424346924
+      },
+      "gate_std": {
+        "Acc_ankle": 0.003741123480722308,
+        "Mag_arm": 0.007824643515050411
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "d456fac3",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 20,
+        "Mag_arm": 30
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.743277476893531,
+      "val_accuracy": 0.8422619047619048,
+      "val_f1": 0.8378459408689254,
+      "val_f1_macro": 0.847048259967535,
+      "val_f1_weighted": 0.8378459408689254,
+      "test_loss": 0.4671522318347683,
+      "test_accuracy": 0.8851626016260162,
+      "test_f1": 0.8849733989792288,
+      "test_f1_macro": 0.8926756800343258,
+      "test_f1_weighted": 0.8849733989792288,
+      "gate_mean": {
+        "Acc_ankle": 0.9402703046798706,
+        "Mag_arm": 0.9171959757804871
+      },
+      "gate_std": {
+        "Acc_ankle": 0.10351777821779251,
+        "Mag_arm": 0.12201740592718124
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "24eb03b2",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 50,
+        "Mag_arm": 50
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.4039809098319402,
+      "val_accuracy": 0.8556547619047619,
+      "val_f1": 0.8514447985421495,
+      "val_f1_macro": 0.8533613920590107,
+      "val_f1_weighted": 0.8514447985421495,
+      "test_loss": 0.2980979933002131,
+      "test_accuracy": 0.8871951219512195,
+      "test_f1": 0.8848609003472221,
+      "test_f1_macro": 0.8919963513945989,
+      "test_f1_weighted": 0.8848609003472221,
+      "gate_mean": {
+        "Acc_ankle": 0.9971970915794373,
+        "Mag_arm": 0.9979597926139832
+      },
+      "gate_std": {
+        "Acc_ankle": 0.0036206634249538183,
+        "Mag_arm": 0.0029362591449171305
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "c4062e85",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 30,
+        "Mag_arm": 20
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.8555526591482616,
+      "val_accuracy": 0.8611111111111112,
+      "val_f1": 0.8607861785045657,
+      "val_f1_macro": 0.8665244195356986,
+      "val_f1_weighted": 0.8607861785045657,
+      "test_loss": 0.7825902811880034,
+      "test_accuracy": 0.8846544715447154,
+      "test_f1": 0.8844796102942574,
+      "test_f1_macro": 0.8926286228634138,
+      "test_f1_weighted": 0.8844796102942574,
+      "gate_mean": {
+        "Acc_ankle": 0.9530385136604309,
+        "Mag_arm": 0.9796960353851318
+      },
+      "gate_std": {
+        "Acc_ankle": 0.07163220643997192,
+        "Mag_arm": 0.02795432321727276
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "3495a437",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 10,
+        "Mag_arm": 20
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 1.1840221219592624,
+      "val_accuracy": 0.8184523809523809,
+      "val_f1": 0.8166430545341353,
+      "val_f1_macro": 0.8255249323602181,
+      "val_f1_weighted": 0.8166430545341353,
+      "test_loss": 0.6461596866933311,
+      "test_accuracy": 0.8836382113821138,
+      "test_f1": 0.8835612987571237,
+      "test_f1_macro": 0.8891950403942835,
+      "test_f1_weighted": 0.8835612987571237,
+      "gate_mean": {
+        "Acc_ankle": 0.8787007927894592,
+        "Mag_arm": 0.9359757304191589
+      },
+      "gate_std": {
+        "Acc_ankle": 0.16833768784999847,
+        "Mag_arm": 0.1012655571103096
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "c560e108",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 20,
+        "Mag_arm": 40
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 1.0439712603886921,
+      "val_accuracy": 0.8635912698412699,
+      "val_f1": 0.8575249505635283,
+      "val_f1_macro": 0.8654449013087478,
+      "val_f1_weighted": 0.8575249505635283,
+      "test_loss": 0.9849678088979024,
+      "test_accuracy": 0.8816056910569106,
+      "test_f1": 0.8803708340281607,
+      "test_f1_macro": 0.8878001272952386,
+      "test_f1_weighted": 0.8803708340281607,
+      "gate_mean": {
+        "Acc_ankle": 0.7892804145812988,
+        "Mag_arm": 0.904977560043335
+      },
+      "gate_std": {
+        "Acc_ankle": 0.281612366437912,
+        "Mag_arm": 0.1411019116640091
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "43b13640",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 30,
+        "Mag_arm": 40
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.6102896181363908,
+      "val_accuracy": 0.8685515873015873,
+      "val_f1": 0.8652275755648582,
+      "val_f1_macro": 0.8728821729026142,
+      "val_f1_weighted": 0.8652275755648582,
+      "test_loss": 0.6554096118221439,
+      "test_accuracy": 0.880589430894309,
+      "test_f1": 0.8800592911338105,
+      "test_f1_macro": 0.8883653093612125,
+      "test_f1_weighted": 0.8800592911338105,
+      "gate_mean": {
+        "Acc_ankle": 0.9617594480514526,
+        "Mag_arm": 0.9953904747962952
+      },
+      "gate_std": {
+        "Acc_ankle": 0.06971074640750885,
+        "Mag_arm": 0.005071902181953192
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "7e793238",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 40,
+        "Mag_arm": 40
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.566493306841169,
+      "val_accuracy": 0.8606150793650794,
+      "val_f1": 0.8576411705662438,
+      "val_f1_macro": 0.8655994384318012,
+      "val_f1_weighted": 0.8576411705662438,
+      "test_loss": 0.6036896177423678,
+      "test_accuracy": 0.8785569105691057,
+      "test_f1": 0.8778819598646812,
+      "test_f1_macro": 0.8856701175841709,
+      "test_f1_weighted": 0.8778819598646812,
+      "gate_mean": {
+        "Acc_ankle": 0.9787220358848572,
+        "Mag_arm": 0.996669590473175
+      },
+      "gate_std": {
+        "Acc_ankle": 0.03321459889411926,
+        "Mag_arm": 0.004508892074227333
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "ca3d6250",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 40,
+        "Mag_arm": 20
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.9922833461610098,
+      "val_accuracy": 0.8482142857142857,
+      "val_f1": 0.8444531199503325,
+      "val_f1_macro": 0.8517895883920872,
+      "val_f1_weighted": 0.8444531199503325,
+      "test_loss": 0.7122426566069688,
+      "test_accuracy": 0.8770325203252033,
+      "test_f1": 0.8765843155566105,
+      "test_f1_macro": 0.8849634340822238,
+      "test_f1_weighted": 0.8765843155566105,
+      "gate_mean": {
+        "Acc_ankle": 0.9118964076042175,
+        "Mag_arm": 0.9367086291313171
+      },
+      "gate_std": {
+        "Acc_ankle": 0.13873568177223206,
+        "Mag_arm": 0.11431607604026794
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "bf3330c0",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 50,
+        "Mag_arm": 20
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.5788810309909639,
+      "val_accuracy": 0.8263888888888888,
+      "val_f1": 0.8220860449597611,
+      "val_f1_macro": 0.8239329088180681,
+      "val_f1_weighted": 0.8220860449597611,
+      "test_loss": 0.37609347216482086,
+      "test_accuracy": 0.8755081300813008,
+      "test_f1": 0.8752314300956842,
+      "test_f1_macro": 0.884314119306764,
+      "test_f1_weighted": 0.8752314300956842,
+      "gate_mean": {
+        "Acc_ankle": 0.9874696731567383,
+        "Mag_arm": 0.9986703991889954
+      },
+      "gate_std": {
+        "Acc_ankle": 0.028134969994425774,
+        "Mag_arm": 0.0027606177609413862
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "7a42a027",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 20,
+        "Mag_arm": 20
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.38989455501238507,
+      "val_accuracy": 0.845734126984127,
+      "val_f1": 0.8451767898019745,
+      "val_f1_macro": 0.8510992676216805,
+      "val_f1_weighted": 0.8451767898019745,
+      "test_loss": 0.3497343526138523,
+      "test_accuracy": 0.8714430894308943,
+      "test_f1": 0.871159636704495,
+      "test_f1_macro": 0.8766505722066543,
+      "test_f1_weighted": 0.871159636704495,
+      "gate_mean": {
+        "Acc_ankle": 0.997184693813324,
+        "Mag_arm": 0.9983507990837097
+      },
+      "gate_std": {
+        "Acc_ankle": 0.004718523006886244,
+        "Mag_arm": 0.0027264640666544437
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "029b5fb5",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 20,
+        "Mag_arm": 10
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.676344769341605,
+      "val_accuracy": 0.7891865079365079,
+      "val_f1": 0.7884336137007246,
+      "val_f1_macro": 0.7977787328098976,
+      "val_f1_weighted": 0.7884336137007246,
+      "test_loss": 0.47050639720467047,
+      "test_accuracy": 0.8597560975609756,
+      "test_f1": 0.8586086169559528,
+      "test_f1_macro": 0.8633722638239195,
+      "test_f1_weighted": 0.8586086169559528,
+      "gate_mean": {
+        "Acc_ankle": 0.9961403608322144,
+        "Mag_arm": 0.9965739250183105
+      },
+      "gate_std": {
+        "Acc_ankle": 0.006416078191250563,
+        "Mag_arm": 0.004113627132028341
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "03ad4ff7",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 40,
+        "Mag_arm": 10
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 1.1165971188318162,
+      "val_accuracy": 0.8134920634920635,
+      "val_f1": 0.812004309024401,
+      "val_f1_macro": 0.819318970987318,
+      "val_f1_weighted": 0.812004309024401,
+      "test_loss": 0.8134976722360626,
+      "test_accuracy": 0.8582317073170732,
+      "test_f1": 0.8579265504900083,
+      "test_f1_macro": 0.8642804004756757,
+      "test_f1_weighted": 0.8579265504900083,
+      "gate_mean": {
+        "Acc_ankle": 0.9215387105941772,
+        "Mag_arm": 0.9298384189605713
+      },
+      "gate_std": {
+        "Acc_ankle": 0.11996998637914658,
+        "Mag_arm": 0.10004685074090958
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "709bfe18",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 50,
+        "Mag_arm": 10
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.9569121920873248,
+      "val_accuracy": 0.7926587301587301,
+      "val_f1": 0.7911803243373096,
+      "val_f1_macro": 0.7982867265324698,
+      "val_f1_weighted": 0.7911803243373096,
+      "test_loss": 0.5923345496014851,
+      "test_accuracy": 0.8572154471544715,
+      "test_f1": 0.8554364531028985,
+      "test_f1_macro": 0.8653457541177715,
+      "test_f1_weighted": 0.8554364531028985,
+      "gate_mean": {
+        "Acc_ankle": 0.9856918454170227,
+        "Mag_arm": 0.9948249459266663
+      },
+      "gate_std": {
+        "Acc_ankle": 0.03403685614466667,
+        "Mag_arm": 0.008165601640939713
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "d83b066d",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 30,
+        "Mag_arm": 10
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 0.609136476403191,
+      "val_accuracy": 0.8080357142857143,
+      "val_f1": 0.8067505428895547,
+      "val_f1_macro": 0.8167383893503484,
+      "val_f1_weighted": 0.8067505428895547,
+      "test_loss": 0.49898482144363526,
+      "test_accuracy": 0.8536585365853658,
+      "test_f1": 0.853533580257423,
+      "test_f1_macro": 0.8613690204087439,
+      "test_f1_weighted": 0.853533580257423,
+      "gate_mean": {
+        "Acc_ankle": 0.9976869821548462,
+        "Mag_arm": 0.9961364269256592
+      },
+      "gate_std": {
+        "Acc_ankle": 0.0024880054406821728,
+        "Mag_arm": 0.005757112056016922
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    },
+    {
+      "experiment_id": "tremor_fs_study_k2_fs10_20_30_40_50_14-33-48",
+      "fs_combo_hash": "6c2c0a2b",
+      "run_timestamp": "2026-03-13_14-33-48",
+      "sensors": [
+        "Acc_ankle",
+        "Mag_arm"
+      ],
+      "fs_map": {
+        "Acc_ankle": 10,
+        "Mag_arm": 10
+      },
+      "fusion_mode": "gated",
+      "embeddings_folder": "Activity_ExtractedFeatures",
+      "tremor_types_merged": [
+        "tremor_clean",
+        "tremor_mild_mod",
+        "tremor_mod_severe"
+      ],
+      "subject_split": {
+        "train_subjects": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          9
+        ],
+        "val_subjects": [
+          2,
+          7
+        ],
+        "test_subjects": [
+          5,
+          10
+        ]
+      },
+      "val_loss": 1.1511170163987174,
+      "val_accuracy": 0.7797619047619048,
+      "val_f1": 0.7774331405236443,
+      "val_f1_macro": 0.7829249207676332,
+      "val_f1_weighted": 0.7774331405236443,
+      "test_loss": 0.7420943650772901,
+      "test_accuracy": 0.8440040650406504,
+      "test_f1": 0.8438723513675804,
+      "test_f1_macro": 0.849692724526209,
+      "test_f1_weighted": 0.8438723513675804,
+      "gate_mean": {
+        "Acc_ankle": 0.9884177446365356,
+        "Mag_arm": 0.989413857460022
+      },
+      "gate_std": {
+        "Acc_ankle": 0.03137587010860443,
+        "Mag_arm": 0.017108939588069916
+      },
+      "num_train": 5955,
+      "num_val": 2016,
+      "num_test": 1968,
+      "seed": 42
+    }
+  ]
+}

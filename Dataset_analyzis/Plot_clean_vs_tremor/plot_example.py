@@ -19,6 +19,10 @@ from pathlib import Path
 VARIANT1 = "clean"
 VARIANT2 = "mod_severe"
 
+# Optional tremor grade filter for VARIANT2 (set to 1, 2, 3, or 4)
+# Set to None to use all available tremor grades
+TREMOR_GRADE = 4
+
 # Choose activity (0-11)
 # 0: Standing still
 # 1: Sitting and relaxing
@@ -54,8 +58,9 @@ if __name__ == "__main__":
     
     # Set save directory
     script_dir = Path(__file__).parent
+    grade_suffix = f"_score{TREMOR_GRADE}" if TREMOR_GRADE is not None else ""
     if SAVE_PLOTS:
-        save_dir = script_dir / f"plots_{VARIANT1}_vs_{VARIANT2}_act{ACTIVITY_IDX}"
+        save_dir = script_dir / f"plots_{VARIANT1}_vs_{VARIANT2}_act{ACTIVITY_IDX}{grade_suffix}"
     else:
         save_dir = None
     
@@ -64,6 +69,8 @@ if __name__ == "__main__":
     print(f"Comparing: {VARIANT1} vs {VARIANT2}")
     print(f"Activity: {ACTIVITY_NAMES[ACTIVITY_IDX]} (ID: {ACTIVITY_IDX})")
     print(f"Window: {WINDOW_IDX}")
+    if TREMOR_GRADE is not None:
+        print(f"Tremor grade filter (variant 2): {TREMOR_GRADE}")
     print(f"{'='*80}\n")
     
     figures = plot_all_sensors_comparison(
@@ -72,7 +79,8 @@ if __name__ == "__main__":
         ACTIVITY_IDX, 
         WINDOW_IDX, 
         FS, 
-        save_dir
+        save_dir,
+        TREMOR_GRADE,
     )
     
     if not SAVE_PLOTS and figures:

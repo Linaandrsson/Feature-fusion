@@ -609,12 +609,14 @@ def precompute_tremor_cache_with_parkinson_model(
     2. "interval": Per-window sampling from severity ranges
        - Samples tremor parameters independently for each window
        - RMS sampled from severity intervals (SCORE_RMS_RANGE)
+       - Activity-dependent scaling applied after score/RMS sampling (BETA_ACTIVITY)
        - Frequency sampled randomly from range (FREQ_RANGE_HZ)
        - More variability, suited for augmentation studies
        
        The tremor RMS for each window is sampled as:
            score = random choice based on augment_mode
-           RMS_acc ~ Uniform(SCORE_RMS_RANGE[score]) * (1 + variation)
+           RMS_acc_base ~ Uniform(SCORE_RMS_RANGE[score]) * (1 + variation)
+           RMS_acc = RMS_acc_base * beta[activity]
            RMS_gyro = k_g(RMS_acc) * RMS_acc
            Freq ~ Uniform(FREQ_RANGE_HZ)
     
@@ -688,7 +690,8 @@ def precompute_tremor_cache_with_parkinson_model(
     else:  # interval
         print(f"Model: Sample parameters per window from severity ranges")
         print(f"       score ~ choice based on augment_mode='{augment_mode}'")
-        print(f"       RMS_acc ~ Uniform(SCORE_RMS_RANGE[score]) * (1 + variation)")
+        print(f"       RMS_acc_base ~ Uniform(SCORE_RMS_RANGE[score]) * (1 + variation)")
+        print(f"       RMS_acc = RMS_acc_base * beta[activity]")
         print(f"       RMS_gyro = k_g(RMS_acc) * RMS_acc")
         print(f"       Frequency ~ Uniform({pk_config.FREQ_RANGE_HZ[0]}-{pk_config.FREQ_RANGE_HZ[1]} Hz)")
     
@@ -700,6 +703,7 @@ def precompute_tremor_cache_with_parkinson_model(
     else:  # interval
         print(f"  - Augment mode: {augment_mode}")
         print(f"  - RMS ranges: {pk_config.SCORE_RMS_RANGE}")
+        print(f"  - Activity beta map: {pk_config.BETA_ACTIVITY}")
         print(f"  - Frequency range: {pk_config.FREQ_RANGE_HZ} Hz")
     print(f"  - Jitter: {'enabled' if use_jitter else 'disabled'} (std={jitter_std:.3f})")
     print(f"  - Scenario seed: {scenario_seed}")
@@ -771,15 +775,18 @@ def precompute_tremor_cache_with_parkinson_model(
         else:  # sampling_method == "interval"
             # Interval-based method: sample parameters per window
             # For ankle, use arm's parameters with scaling; otherwise sample new params
+            activity_beta = float(pk_config.BETA_ACTIVITY.get(label, 1.0))
+
             if body_part == 'ankle':
                 # Ankle is derived from arm tremor for the same window
                 # (arm is always processed first, so it will be in cache)
                 arm_key = (w_idx, 'arm')
                 arm_meta = tremor_cache[arm_key]['meta']
-                score = arm_meta['score']
+                score = int(arm_meta.get('sampled_score', arm_meta.get('score', 0)))
                 freq_hz = arm_meta['freq_hz']
                 arm_acc_target = arm_meta['acc_target_rms']
                 arm_gyro_target = arm_meta['gyro_target_rms']
+                activity_beta = float(arm_meta.get('activity_beta', activity_beta))
                 
                 # Apply ankle scaling
                 ankle_ratio = pk_config.ANKLE_RATIO_BY_SCORE[score]
@@ -791,6 +798,10 @@ def precompute_tremor_cache_with_parkinson_model(
                     augment_mode=augment_mode,
                     rng=interval_rng
                 )
+
+                # Apply activity-dependent modulation after score/RMS sampling
+                # to preserve the requested "draw score first, then scale by activity" flow.
+                acc_target = max(0.0, float(acc_target) * activity_beta)
                 
                 # Calculate gyroscope RMS from accelerometer RMS
                 k_g = pk_config.choose_kg_from_rms_acc(acc_target)
@@ -853,8 +864,12 @@ def precompute_tremor_cache_with_parkinson_model(
         if sampling_method == "subject":
             meta['severity'] = pk_config.get_subject_severity(subj_idx)
         else:  # interval
-            # Get severity from score
-            score = pk_config.get_tremor_score(acc_target)
+            sampled_score = int(score)
+            scaled_score = pk_config.get_tremor_score(acc_target)
+
+            # Keep interval-sampled rest score as canonical segment label.
+            score = sampled_score
+
             if score == 0:
                 meta['severity'] = 'none'
             elif score == 1:
@@ -867,6 +882,9 @@ def precompute_tremor_cache_with_parkinson_model(
                 meta['severity'] = 'severe'
             meta['augment_mode'] = augment_mode
             meta['score'] = score
+            meta['sampled_score'] = sampled_score
+            meta['scaled_score'] = scaled_score
+            meta['activity_beta'] = activity_beta
         
         tremor_cache[(w_idx, body_part)] = {
             'acc_noise': acc_noise.astype(np.float32),

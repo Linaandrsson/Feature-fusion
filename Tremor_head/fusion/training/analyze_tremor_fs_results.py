@@ -21,7 +21,7 @@ from collections import defaultdict
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURATION - Set your experiment ID here!
 # ═══════════════════════════════════════════════════════════════
-EXPERIMENT_ID = "tremor_fs_study_k2_fs10_20_30_40_50_11-52-29"  # Set to None to see available experiments
+EXPERIMENT_ID = "tremor_fs_study_k2_fs10_20_30_40_50_13-30-35"  # Set to None to see available experiments
                       # Example: "tremor_fs_study_k2_fs10_30_50_14-25-30"
 # ═══════════════════════════════════════════════════════════════
 

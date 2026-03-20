@@ -98,7 +98,7 @@ def load_sensor_data(variant_name: str, sensor_name: str, fs: int = 50):
     }
 
 
-def find_matching_windows(data1, data2, activity_idx, window_idx=0):
+def find_matching_windows(data1, data2, activity_idx, window_idx=0, severity=None):
     """
     Find matching windows from both datasets for the specified activity.
     
@@ -107,6 +107,7 @@ def find_matching_windows(data1, data2, activity_idx, window_idx=0):
         data2: Second dataset dict
         activity_idx: Activity index (0-11)
         window_idx: Which window to select (default: 0 for first match)
+        severity: Optional tremor score filter for dataset 2 (1-4)
         
     Returns:
         Tuple of (signal1, signal2, metadata1, metadata2) or None if not found
@@ -114,12 +115,20 @@ def find_matching_windows(data1, data2, activity_idx, window_idx=0):
     # Find all windows matching the activity
     mask1 = data1['y'] == activity_idx
     mask2 = data2['y'] == activity_idx
+
+    # Optional severity filter for dataset 2
+    if severity is not None:
+        severity_mask = data2['tremor_score'] == severity
+        mask2 = mask2 & severity_mask
     
     if not mask1.any():
         print(f"❌ No samples found for activity {activity_idx} in dataset 1")
         return None
     if not mask2.any():
-        print(f"❌ No samples found for activity {activity_idx} in dataset 2")
+        if severity is None:
+            print(f"❌ No samples found for activity {activity_idx} in dataset 2")
+        else:
+            print(f"❌ No samples found for activity {activity_idx} with tremor score {severity} in dataset 2")
         return None
     
     # Get matching indices
@@ -227,8 +236,8 @@ def plot_comparison(sensor_name, signal1, signal2, metadata1, metadata2,
     return fig
 
 
-def plot_all_sensors_comparison(variant1_name, variant2_name, activity_idx, 
-                                window_idx=0, fs=50, save_dir=None):
+def plot_all_sensors_comparison(variant1_name, variant2_name, activity_idx,
+                                window_idx=0, fs=50, save_dir=None, severity=None):
     """
     Plot comparison for all sensors.
     
@@ -239,6 +248,7 @@ def plot_all_sensors_comparison(variant1_name, variant2_name, activity_idx,
         window_idx: Window index to plot
         fs: Sampling frequency
         save_dir: Directory to save plots (optional)
+        severity: Optional tremor score filter for dataset 2 (1-4)
     """
     if save_dir:
         save_dir = Path(save_dir)
@@ -252,6 +262,8 @@ def plot_all_sensors_comparison(variant1_name, variant2_name, activity_idx,
     print(f"PLOTTING: {variant1_short.upper()} vs {variant2_short.upper()}")
     print(f"Activity: {activity_name} (ID: {activity_idx})")
     print(f"Window: {window_idx}")
+    if severity is not None:
+        print(f"Severity filter (dataset 2): Score = {severity}")
     print("="*80 + "\n")
     
     figures = []
@@ -265,7 +277,7 @@ def plot_all_sensors_comparison(variant1_name, variant2_name, activity_idx,
             data2 = load_sensor_data(variant2_name, sensor_name, fs)
             
             # Find matching windows
-            result = find_matching_windows(data1, data2, activity_idx, window_idx)
+            result = find_matching_windows(data1, data2, activity_idx, window_idx, severity)
             if result is None:
                 continue
             
@@ -359,7 +371,7 @@ def select_activity():
             sys.exit(1)
 
 
-def select_window_index(variant1_name, variant2_name, activity_idx):
+def select_window_index(variant1_name, variant2_name, activity_idx, severity=None):
     """Interactive window index selection."""
     # Load one sensor to get window counts
     try:
@@ -368,6 +380,10 @@ def select_window_index(variant1_name, variant2_name, activity_idx):
         
         mask1 = data1['y'] == activity_idx
         mask2 = data2['y'] == activity_idx
+
+        if severity is not None:
+            severity_mask = data2['tremor_score'] == severity
+            mask2 = mask2 & severity_mask
         
         count1 = mask1.sum()
         count2 = mask2.sum()
@@ -377,6 +393,13 @@ def select_window_index(variant1_name, variant2_name, activity_idx):
         print(f"  Dataset 1: {count1} windows")
         print(f"  Dataset 2: {count2} windows")
         print(f"  Max index: {max_windows - 1}")
+
+        if max_windows <= 0:
+            if severity is None:
+                print("❌ No overlapping windows available for selected activity.")
+            else:
+                print(f"❌ No windows available for selected activity with tremor score {severity} in dataset 2.")
+            sys.exit(1)
         
     except Exception as e:
         print(f"⚠️  Could not determine window count: {e}")
@@ -397,6 +420,25 @@ def select_window_index(variant1_name, variant2_name, activity_idx):
             sys.exit(1)
 
 
+def select_severity():
+    """Optional tremor severity selection for dataset 2."""
+    print("\nOptional tremor grade filter for dataset 2:")
+    print("  - Press Enter to skip (use all grades)")
+    print("  - Enter tremor grade (1-4)")
+
+    while True:
+        choice = input("Enter tremor grade [Enter to skip]: ").strip()
+        if not choice:
+            return None
+        try:
+            severity = int(choice)
+            if 1 <= severity <= 4:
+                return severity
+            print("❌ Tremor grade must be 1, 2, 3, or 4.")
+        except ValueError:
+            print(f"❌ Invalid number '{choice}'")
+
+
 def main():
     """Main interactive function."""
     print("="*80)
@@ -411,24 +453,28 @@ def main():
     activity_idx = select_activity()
     activity_name = ACTIVITY_NAMES[activity_idx]
     
+    # Optional tremor score filter (applied to dataset 2 only)
+    severity = select_severity()
+
     # Construct full variant names (assuming fs=50)
     fs = 50
     variant1_full = f"s2_w2_fs{fs}_tremor_{variant1}"
     variant2_full = f"s2_w2_fs{fs}_tremor_{variant2}"
     
     # Select window index
-    window_idx = select_window_index(variant1_full, variant2_full, activity_idx)
+    window_idx = select_window_index(variant1_full, variant2_full, activity_idx, severity)
     
     # Ask if user wants to save plots
     save_choice = input("\nSave plots to file? (y/n, default n): ").strip().lower()
     save_dir = None
     if save_choice == 'y':
-        save_dir = SCRIPT_DIR / f"plots_{variant1}_vs_{variant2}_act{activity_idx}"
+        severity_str = f"_score{severity}" if severity is not None else ""
+        save_dir = SCRIPT_DIR / f"plots_{variant1}_vs_{variant2}_act{activity_idx}{severity_str}"
         print(f"Will save to: {save_dir}")
     
     # Generate plots
     figures = plot_all_sensors_comparison(
-        variant1_full, variant2_full, activity_idx, window_idx, fs, save_dir
+        variant1_full, variant2_full, activity_idx, window_idx, fs, save_dir, severity
     )
     
     if not save_dir and figures:

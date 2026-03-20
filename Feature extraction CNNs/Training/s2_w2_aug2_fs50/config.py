@@ -22,6 +22,9 @@ variant_names = [
 
 # Sequence length
 seq_len = 100  # fs*s (50 Hz × 2s = 100 samples)
+
+# Output variant name (used for saving models and embeddings)
+output_variant_name = "fs50_tremor_mixed_all3"  # Combined output from all 3 augmentations
 # ====================================================================
 
 # Use Tremor_datagenerator_files instead of regular Datagenerator_files
@@ -41,7 +44,6 @@ base_dir = str(variant_dir)
 # ============================================================
 # Where to save trained models (inside Feature extraction CNNs folder)
 feature_extraction_root = script_dir.parent.parent  # Training/s2_w2_aug2_fs50_mixed_TODO -> Training -> Feature extraction CNNs
-output_variant_name = "fs50_tremor_mixed_all3"  # Combined output from all 3 augmentations
 models_output_dir = feature_extraction_root / "Models" / dataset_config / output_variant_name
 models_output_dir.mkdir(parents=True, exist_ok=True)
 
