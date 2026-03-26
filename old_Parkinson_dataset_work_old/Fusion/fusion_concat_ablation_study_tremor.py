@@ -6,8 +6,8 @@ Tremor Sensor Ablation Study Framework
 Features:
 - Automatic sensor ablation studies with k-sensor subsets
 - Tests all possible combinations of k sensors from available sensor list  
-- Uses tremor-generated data with 3 augmentation variants
-- Subject-based splitting: TEST=[5,10], VAL=[2,7], TRAIN=[1,3,4,6,8,9]
+- Uses tremor-generated data with configurable variants
+- Uses strict subject-based split with explicit holdout subjects
 - Comprehensive logging of all combinations and their performance
 - Automatic ranking from best to worst accuracy
 
@@ -22,7 +22,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 from pathlib import Path
 from collections import defaultdict
 import json
@@ -41,7 +42,7 @@ from typing import List, Dict, Tuple, Optional
 # -------------------------------
 # Reproducibility
 # -------------------------------
-SEED = 43
+SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
@@ -56,11 +57,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # -------------------------------
 # Data paths and sensors
 # -------------------------------
-# Base directory where tremor data lives
-base_data_dir = Path("/Volumes/NO NAME/Master Lina/Code/data/Tremor_datagenerator_files")
+# Base directory where tremor data lives (inside Parkinson_dataset_work)
+SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_ROOT = SCRIPT_DIR.parent
+base_data_dir = PROJECT_ROOT / "Data" / "Tremor_datagenerator_files"
 
-# Tremor augmentation variants (will be combined as augmentations)
-#"s2_w2_fs50_tremor_clean", "s2_w2_fs50_tremor_mild_mod", "s2_w2_fs50_tremor_mod_severe"
+# Tremor variants (combined as augmentations)
 tremor_variants = ["s2_w2_fs50_tremor_clean", "s2_w2_fs50_tremor_mild_mod", "s2_w2_fs50_tremor_mod_severe"]
 # Optional tag for report folder name.
 # Example: "mixed", "clean_only", "tremor_only"
@@ -69,12 +71,13 @@ ABLATION_REPORT_TAG = "mixed"
 embeddings_folder_name = "Activity_ExtractedFeatures"  # Folder name where CNN embeddings are stored
 
 # Available sensors (ablation will test subsets of these)
-ALL_SENSORS = ["Acc_ankle", "Acc_arm", "Gyro_ankle", "Gyro_arm", "Mag_ankle", "Mag_arm", "Acc_chest", "ECG"]
 ALL_SENSORS = ["Acc_arm", "Gyro_arm", "Mag_arm"]
-# Subject-based splits (to prevent data leakage)
-TEST_SUBJECTS = [5, 10]
-VAL_SUBJECTS = [2, 7]
-# TRAIN_SUBJECTS = [1, 3, 4, 6, 8, 9] (implicitly, all others)
+
+# Subject-based split configuration (must match feature extractor policy)
+HOLDOUT_SUBJECTS = [1]  # Never used in train/val/test for fusion model development
+TRAIN_SUBJECTS = [2, 3, 4, 5, 10, 11, 12, 14, 16, 17, 20, 21, 22, 23, 24, 26, 28, 29]
+VAL_SUBJECTS = [6, 8, 13, 15, 25]
+TEST_SUBJECTS = [7, 9, 18, 19, 27]
 
 # -------------------------------
 # Sensor Ablation Configuration
@@ -85,7 +88,11 @@ ABLATION_K = [len(ALL_SENSORS)]  # List of subset sizes to test (e.g., [2, 3] te
 print(f"\nUsing tremor variants as augmentations:")
 for variant in tremor_variants:
     print(f"  - {variant}")
-print(f"\nSubject-based splits: TEST=[5,10], VAL=[2,7], TRAIN=[1,3,4,6,8,9]")
+print("\nUsing strict subject-based split for fusion:")
+print(f"  HOLDOUT={HOLDOUT_SUBJECTS}")
+print(f"  TRAIN={TRAIN_SUBJECTS}")
+print(f"  VAL={VAL_SUBJECTS}")
+print(f"  TEST={TEST_SUBJECTS}")
 
 # -------------------------------
 # Training hyperparameters
@@ -115,9 +122,6 @@ head_dropout = 0.4
 # -------------------------------
 # Logging
 # -------------------------------
-# Use script's directory as base for logs
-SCRIPT_DIR = Path(__file__).parent
-
 LOG_DIR = SCRIPT_DIR / "tremor_logs"
 LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "tremor_fusion_ablation.jsonl"
@@ -139,8 +143,8 @@ ABLATION_REPORT_DIR.mkdir(exist_ok=True)
 
 def load_combined_tremor_embeddings(sensor_name: str) -> Dict[str, np.ndarray]:
     """
-    Load and combine embeddings from all 3 tremor variants for a sensor.
-    Uses SUBJECT-BASED splits to prevent data leakage.
+    Load and combine embeddings from all configured tremor variants for a sensor.
+    Performs strict subject-based splitting for fusion.
     
     Each variant folder contains:
       Activity_ExtractedFeatures/{sensor}_embeddings.npz with:
@@ -149,10 +153,10 @@ def load_combined_tremor_embeddings(sensor_name: str) -> Dict[str, np.ndarray]:
         - train_subjects, val_subjects, test_subjects
         - train_labels, val_labels, test_labels (tremor scores - not used for classification)
     
-    We concatenate ALL data (train+val+test), then re-split by SUBJECT ID:
-      TEST: subjects [5, 10]
-      VAL: subjects [2, 7]  
-      TRAIN: subjects [1, 3, 4, 6, 8, 9]
+    Source files may contain split leakage from extraction stage.
+    To avoid leakage, this function concatenates all rows from each variant,
+    then re-splits by subject IDs using TRAIN_SUBJECTS/VAL_SUBJECTS/TEST_SUBJECTS.
+    HOLDOUT_SUBJECTS are explicitly excluded.
     
     Returns dict with combined (concatenated) data:
       Z_train, y_train, Z_val, y_val, Z_test, y_test
@@ -174,63 +178,64 @@ def load_combined_tremor_embeddings(sensor_name: str) -> Dict[str, np.ndarray]:
         
         data = np.load(npz_path)
         
-        # Concatenate ALL data (train+val+test) from this variant
-        variant_embeddings = np.concatenate([
-            data["train_embeddings"],
-            data["val_embeddings"],
-            data["test_embeddings"]
-        ], axis=0).astype(np.float32)
-        
-        variant_activities = np.concatenate([
-            data["train_activities"],
-            data["val_activities"],
-            data["test_activities"]
-        ], axis=0).astype(np.int64)
-        
-        variant_subjects = np.concatenate([
-            data["train_subjects"],
-            data["val_subjects"],
-            data["test_subjects"]
-        ], axis=0).astype(np.int64)
-        
+        # Concatenate all rows from this variant, then re-split by subject.
+        variant_embeddings = np.concatenate(
+            [data["train_embeddings"], data["val_embeddings"], data["test_embeddings"]], axis=0
+        ).astype(np.float32)
+        variant_activities = np.concatenate(
+            [data["train_activities"], data["val_activities"], data["test_activities"]], axis=0
+        ).astype(np.int64)
+        variant_subjects = np.concatenate(
+            [data["train_subjects"], data["val_subjects"], data["test_subjects"]], axis=0
+        ).astype(np.int64)
+
         all_embeddings.append(variant_embeddings)
         all_activities.append(variant_activities)
         all_subjects.append(variant_subjects)
-    
-    # Concatenate across variants (augmentation)
+
     Z_all = np.concatenate(all_embeddings, axis=0)
     y_all = np.concatenate(all_activities, axis=0)
     subj_all = np.concatenate(all_subjects, axis=0)
-    
-    # Now do SUBJECT-BASED splitting
-    train_mask = ~np.isin(subj_all, TEST_SUBJECTS + VAL_SUBJECTS)
+
+    holdout_mask = np.isin(subj_all, HOLDOUT_SUBJECTS)
+    train_mask = np.isin(subj_all, TRAIN_SUBJECTS)
     val_mask = np.isin(subj_all, VAL_SUBJECTS)
     test_mask = np.isin(subj_all, TEST_SUBJECTS)
-    
+
+    # Safety checks: disjoint subject sets and no holdout leakage.
+    if set(TRAIN_SUBJECTS) & set(VAL_SUBJECTS):
+        raise ValueError("TRAIN_SUBJECTS and VAL_SUBJECTS overlap")
+    if set(TRAIN_SUBJECTS) & set(TEST_SUBJECTS):
+        raise ValueError("TRAIN_SUBJECTS and TEST_SUBJECTS overlap")
+    if set(VAL_SUBJECTS) & set(TEST_SUBJECTS):
+        raise ValueError("VAL_SUBJECTS and TEST_SUBJECTS overlap")
+    if (set(HOLDOUT_SUBJECTS) & set(TRAIN_SUBJECTS)) or (set(HOLDOUT_SUBJECTS) & set(VAL_SUBJECTS)) or (set(HOLDOUT_SUBJECTS) & set(TEST_SUBJECTS)):
+        raise ValueError("HOLDOUT_SUBJECTS overlap with TRAIN/VAL/TEST")
+
     Z_train = Z_all[train_mask]
     y_train = y_all[train_mask]
     Z_val = Z_all[val_mask]
     y_val = y_all[val_mask]
     Z_test = Z_all[test_mask]
     y_test = y_all[test_mask]
-    
-    # Verify splits are correct
-    train_subjects = np.unique(subj_all[train_mask])
-    val_subjects = np.unique(subj_all[val_mask])
-    test_subjects = np.unique(subj_all[test_mask])
-    
-    expected_train = sorted([1, 3, 4, 6, 8, 9])
-    expected_val = sorted(VAL_SUBJECTS)
-    expected_test = sorted(TEST_SUBJECTS)
-    
-    assert list(train_subjects) == expected_train, f"Train subjects mismatch: {train_subjects} != {expected_train}"
-    assert list(val_subjects) == expected_val, f"Val subjects mismatch: {val_subjects} != {expected_val}"
-    assert list(test_subjects) == expected_test, f"Test subjects mismatch: {test_subjects} != {expected_test}"
-    
-    print(f"  {sensor_name}: Subject-based split verified ✓")
-    print(f"    Train: {len(Z_train)} samples from subjects {list(train_subjects)}")
-    print(f"    Val:   {len(Z_val)} samples from subjects {list(val_subjects)}")
-    print(f"    Test:  {len(Z_test)} samples from subjects {list(test_subjects)}")
+
+    train_subjects = sorted(np.unique(subj_all[train_mask]).astype(int).tolist())
+    val_subjects = sorted(np.unique(subj_all[val_mask]).astype(int).tolist())
+    test_subjects = sorted(np.unique(subj_all[test_mask]).astype(int).tolist())
+    holdout_subjects = sorted(np.unique(subj_all[holdout_mask]).astype(int).tolist())
+
+    if train_subjects != sorted(TRAIN_SUBJECTS):
+        raise ValueError(f"Train subjects mismatch: {train_subjects} != {sorted(TRAIN_SUBJECTS)}")
+    if val_subjects != sorted(VAL_SUBJECTS):
+        raise ValueError(f"Val subjects mismatch: {val_subjects} != {sorted(VAL_SUBJECTS)}")
+    if test_subjects != sorted(TEST_SUBJECTS):
+        raise ValueError(f"Test subjects mismatch: {test_subjects} != {sorted(TEST_SUBJECTS)}")
+
+    print(f"  {sensor_name}: subject-based split applied across {len(tremor_variants)} variants ✓")
+    print(f"    Train: {len(Z_train)} samples from subjects {train_subjects}")
+    print(f"    Val:   {len(Z_val)} samples from subjects {val_subjects}")
+    print(f"    Test:  {len(Z_test)} samples from subjects {test_subjects}")
+    print(f"    Holdout (excluded): subjects {holdout_subjects}")
     
     return {
         "Z_train": Z_train,
@@ -485,8 +490,7 @@ def train_sensor_combination(
     # ---- Step 4: Training loop ----
     print("\n[4/5] Training...")
     
-    best_val_macro_f1 = -1.0
-    best_val_loss = float("inf")
+    best_val_f1_macro = -float("inf")
     best_state = None
     no_improve = 0
     
@@ -525,8 +529,6 @@ def train_sensor_combination(
         val_loss_sum = 0.0
         val_correct = 0
         val_total = 0
-        val_preds = []
-        val_labels = []
         
         with torch.no_grad():
             for batch in val_loader:
@@ -538,27 +540,36 @@ def train_sensor_combination(
                 preds = torch.argmax(logits, dim=1)
                 val_correct += (preds == y_batch).sum().item()
                 val_total += y_batch.size(0)
-                val_preds.extend(preds.cpu().numpy())
-                val_labels.extend(y_batch.cpu().numpy())
         
         val_loss = val_loss_sum / val_total
         val_acc = val_correct / val_total
-        val_f1_macro = f1_score(val_labels, val_preds, average='macro', zero_division=0)
+        
+        # Compute macro F1 on validation set
+        val_y_all = []
+        val_pred_all = []
+        with torch.no_grad():
+            for batch in val_loader:
+                Z, y_batch = unpack_batch(batch)
+                logits, _ = model(Z)
+                preds = torch.argmax(logits, dim=1).cpu().numpy()
+                val_y_all.extend(y_batch.cpu().numpy())
+                val_pred_all.extend(preds)
+        val_f1_macro = f1_score(val_y_all, val_pred_all, average='macro')
         
         print(f"Epoch {epoch+1:3d}/{epochs} | "
               f"Train loss {train_loss:.4f} acc {train_acc:.4f} | "
-              f"Val loss {val_loss:.4f} acc {val_acc:.4f} macro_f1 {val_f1_macro:.4f}")
+              f"Val loss {val_loss:.4f} acc {val_acc:.4f} | "
+              f"Val F1 (macro) {val_f1_macro:.4f}")
         
-        # ---- Early stopping ----
-        if val_f1_macro > best_val_macro_f1 + min_delta:
-            best_val_macro_f1 = val_f1_macro
-            best_val_loss = val_loss
+        # ---- Early stopping (based on macro F1) ----
+        if val_f1_macro > best_val_f1_macro + min_delta:
+            best_val_f1_macro = val_f1_macro
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             no_improve = 0
         else:
             no_improve += 1
             if no_improve >= patience:
-                print(f"\nEarly stopping at epoch {epoch+1}. Best val macro F1: {best_val_macro_f1:.4f}")
+                print(f"\nEarly stopping at epoch {epoch+1}. Best val F1 (macro): {best_val_f1_macro:.4f}")
                 break
     
     # Restore best model
@@ -594,10 +605,52 @@ def train_sensor_combination(
     test_loss = test_loss_total / len(y_test_np)
     test_acc = accuracy_score(y_test_np, y_pred)
     test_f1_macro = f1_score(y_test_np, y_pred, average='macro')
+    test_f1_weighted = f1_score(y_test_np, y_pred, average='weighted')
     
     print(f"\nTest Loss: {test_loss:.4f}")
     print(f"Test Accuracy: {test_acc:.4f}")
     print(f"Test F1 (macro): {test_f1_macro:.4f}")
+    print(f"Test F1 (weighted): {test_f1_weighted:.4f}")
+    
+    # Compute and save confusion matrix with two subplots
+    cm = confusion_matrix(y_test_np, y_pred)
+    
+    # Create figure with 2 subplots: absolute counts and percentages (larger size to fit text)
+    fig, axes = plt.subplots(1, 2, figsize=(22, 10))
+    
+    # Left plot: Absolute counts
+    disp1 = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=np.arange(num_classes))
+    disp1.plot(ax=axes[0], cmap='Blues', values_format='d')
+    axes[0].set_title("Absolute Counts", fontsize=14, fontweight='bold')
+    
+    # Reduce text size in left plot
+    for labels in [axes[0].texts]:
+        for label in labels:
+            if hasattr(label, 'set_fontsize'):
+                label.set_fontsize(8)
+    for text in axes[0].texts:
+        text.set_fontsize(8)
+    
+    # Right plot: Normalized by true label (recall per class - percentage of samples per true class)
+    cm_normalized = cm.astype('float') / cm.sum(axis=1, keepdims=True)
+    disp2 = ConfusionMatrixDisplay(confusion_matrix=cm_normalized, display_labels=np.arange(num_classes))
+    disp2.plot(ax=axes[1], cmap='Blues', values_format='.1%')
+    axes[1].set_title("Recall per True Label (% of samples)", fontsize=14, fontweight='bold')
+    
+    # Reduce text size in right plot
+    for text in axes[1].texts:
+        text.set_fontsize(8)
+    
+    # Overall title
+    fig.suptitle(f"Confusion Matrix - Sensors: {sensors}\nTest Acc: {test_acc:.4f}, Test F1 (macro): {test_f1_macro:.4f}", 
+                 fontsize=13, fontweight='bold', y=0.98)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    
+    # Save confusion matrix to ablation report folder
+    cm_filename = ABLATION_REPORT_DIR / f"cm_{experiment_id}.png"
+    plt.savefig(cm_filename, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ Confusion matrix saved to {cm_filename}")
     
     # Compute gate statistics
     gate_mean = {}
@@ -620,11 +673,13 @@ def train_sensor_combination(
         "num_sensors": len(sensors),
         "fusion_mode": "gated" if USE_GATING else "concat",
         "val_accuracy": float(val_acc),
-        "val_f1_macro": float(best_val_macro_f1),
-        "val_loss": float(best_val_loss),
+        "val_f1_macro": float(best_val_f1_macro),
+        "val_loss": float(val_loss),
         "test_loss": float(test_loss),
         "test_accuracy": float(test_acc),
         "test_f1_macro": float(test_f1_macro),
+        "test_f1_weighted": float(test_f1_weighted),
+        "confusion_matrix_file": str(cm_filename.name),
         "gate_mean": gate_mean if USE_GATING else None,
         "gate_std": gate_std if USE_GATING else None,
         "seed": SEED,
@@ -656,7 +711,11 @@ def main():
     print(f"\nTremor variants (combined as augmentations):")
     for variant in tremor_variants:
         print(f"  - {variant}")
-    print(f"\nSubject splits: TEST=[5,10], VAL=[2,7], TRAIN=[1,3,4,6,8,9]")
+    print("\nSubject split policy:")
+    print(f"  HOLDOUT={HOLDOUT_SUBJECTS}")
+    print(f"  TRAIN={TRAIN_SUBJECTS}")
+    print(f"  VAL={VAL_SUBJECTS}")
+    print(f"  TEST={TEST_SUBJECTS}")
     
     # Timestamp for this run (readable format: MMDD_HHMM)
     run_timestamp = datetime.now().strftime("%m%d_%H%M")
@@ -693,7 +752,8 @@ def main():
     
     # Get dataset info
     embed_dim = embeddings_dict[ALL_SENSORS[0]]["Z_train"].shape[1]
-    num_classes = len(np.unique(embeddings_dict[ALL_SENSORS[0]]["y_train"]))
+    ref = embeddings_dict[ALL_SENSORS[0]]
+    num_classes = len(np.unique(np.concatenate([ref["y_train"], ref["y_val"], ref["y_test"]], axis=0)))
     
     print(f"\nDataset info:")
     print(f"  Embedding dim: {embed_dim}")
@@ -796,7 +856,7 @@ def main():
     if best.get('ablated_sensors'):
         print(f"  Ablated: {', '.join(best['ablated_sensors'])}")
     print(f"  Test F1 (macro): {best['test_f1_macro']:.4f}")
-    print(f"  Val F1 (macro): {best['val_f1_macro']:.4f}")
+    print(f"  Test F1 (weighted): {best['test_f1_weighted']:.4f}")
     print(f"  Test Loss: {best['test_loss']:.4f}")
     print(f"  Val Loss: {best['val_loss']:.4f}")
     print(f"{'='*70}")
@@ -815,7 +875,11 @@ def main():
         f.write("Tremor variants used:\n")
         for variant in tremor_variants:
             f.write(f"  - {variant}\n")
-        f.write(f"\nSubject splits: TEST=[5,10], VAL=[2,7], TRAIN=[1,3,4,6,8,9]\n\n")
+        f.write("\nSplits: using train/val/test from extracted embedding files\n\n")
+        f.write(f"Holdout subjects (excluded): {HOLDOUT_SUBJECTS}\n")
+        f.write(f"Train subjects: {TRAIN_SUBJECTS}\n")
+        f.write(f"Val subjects: {VAL_SUBJECTS}\n")
+        f.write(f"Test subjects: {TEST_SUBJECTS}\n\n")
         
         f.write("="*total_width + "\n")
         f.write("RESULTS RANKED BY TEST F1 (MACRO)\n")
@@ -836,7 +900,7 @@ def main():
         if best.get('ablated_sensors'):
             f.write(f"  Ablated: {', '.join(best['ablated_sensors'])}\n")
         f.write(f"  Test F1 (macro): {best['test_f1_macro']:.4f}\n")
-        f.write(f"  Val F1 (macro): {best['val_f1_macro']:.4f}\n")
+        f.write(f"  Test F1 (weighted): {best['test_f1_weighted']:.4f}\n")
         f.write(f"  Test Loss: {best['test_loss']:.4f}\n")
         f.write(f"  Val Loss: {best['val_loss']:.4f}\n")
     

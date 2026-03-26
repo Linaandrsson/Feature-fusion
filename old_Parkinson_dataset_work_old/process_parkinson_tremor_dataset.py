@@ -70,6 +70,12 @@ CONTROL_LIKE_SOURCES = {"mhealth", "ct"}
 PD_SOURCE = "pd"
 # Sentinel: real PD window with unknown clinical tremor severity.
 PD_TREMOR_SENTINEL_SCORE = 5
+ALLOWED_TREMOR_SCORES_BY_MODE = {
+    "clean": {0},
+    "mild_mod": {1, 2},
+    "mod_severe": {3, 4},
+    "parkinson": {PD_TREMOR_SENTINEL_SCORE},
+}
 
 # Parameters passed into precompute_tremor_cache_with_parkinson_model
 TREMOR_MU = 1.0
@@ -694,10 +700,12 @@ def generate_variant(
     target_stride = int(round(STRIDE_SEC * FS))
 
     is_parkinson_mode = augment_mode == "parkinson"
+    allowed_scores = ALLOWED_TREMOR_SCORES_BY_MODE.get(augment_mode)
     if is_parkinson_mode:
         variant_window_specs = [ws for ws in window_specs if ws.source == PD_SOURCE]
     else:
-        variant_window_specs = window_specs
+        # PD windows are excluded from synthetic variants.
+        variant_window_specs = [ws for ws in window_specs if ws.source in CONTROL_LIKE_SOURCES]
 
     if not variant_window_specs:
         print(f"WARNING: no windows available for mode '{augment_mode}'. Skipping variant generation.")
@@ -742,11 +750,28 @@ def generate_variant(
                 continue
 
             is_pd = ws.source == PD_SOURCE
-            is_control_like = ws.source in CONTROL_LIKE_SOURCES
+
+            if is_pd:
+                tremor_score_val = PD_TREMOR_SENTINEL_SCORE
+            else:
+                severity_cache_entry = tremor_cache.get((w_idx, severity_body_part))
+                severity_meta = severity_cache_entry.get("meta", {}) if severity_cache_entry else {}
+                tremor_acc_rms_target = severity_meta.get("acc_target_rms", 0.0)
+                if GENERATE_TREMOR:
+                    tremor_score_val = int(
+                        severity_meta.get(
+                            "sampled_score",
+                            severity_meta.get("score", pk_config.get_tremor_score(tremor_acc_rms_target)),
+                        )
+                    )
+                else:
+                    tremor_score_val = 0
 
             sensor_available = ws.sensor_profile == "full" or sensor_name in PARKINSON_AVAILABLE_SENSORS
             if not sensor_available:
-                tremor_score_missing = PD_TREMOR_SENTINEL_SCORE if is_pd else 0
+                tremor_score_missing = tremor_score_val
+                if allowed_scores is not None and tremor_score_missing not in allowed_scores:
+                    continue
                 zero_win = np.zeros((target_window_len, len(cols)), dtype=np.float32)
                 for _ in range(AUG_SIZE):
                     X_list.append(zero_win.T.copy())
@@ -771,19 +796,6 @@ def generate_variant(
                 tremor_gyro_rms = 0.0
                 tremor_score = PD_TREMOR_SENTINEL_SCORE
             else:
-                severity_cache_entry = tremor_cache.get((w_idx, severity_body_part))
-                severity_meta = severity_cache_entry.get("meta", {}) if severity_cache_entry else {}
-                tremor_acc_rms_target = severity_meta.get("acc_target_rms", 0.0)
-                if GENERATE_TREMOR:
-                    tremor_score_val = int(
-                        severity_meta.get(
-                            "sampled_score",
-                            severity_meta.get("score", pk_config.get_tremor_score(tremor_acc_rms_target)),
-                        )
-                    )
-                else:
-                    tremor_score_val = 0
-
                 apply_awgn_aug = False
                 apply_rotation_aug = False
 
@@ -823,7 +835,7 @@ def generate_variant(
                     tremor_freq = 0.0
                     tremor_acc_rms = 0.0
                     tremor_gyro_rms = 0.0
-                    tremor_score = 0
+                    tremor_score = tremor_score_val
                 else:
                     signal_cache_entry = tremor_cache.get((w_idx, signal_body_part))
                     if signal_cache_entry is not None and GENERATE_TREMOR:
@@ -843,11 +855,8 @@ def generate_variant(
                         tremor_gyro_rms = 0.0
                         tremor_score = 0
 
-                if not is_control_like:
-                    tremor_freq = 0.0
-                    tremor_acc_rms = 0.0
-                    tremor_gyro_rms = 0.0
-                    tremor_score = 0
+            if allowed_scores is not None and tremor_score not in allowed_scores:
+                continue
 
             for _ in range(AUG_SIZE):
                 if is_pd:
@@ -985,6 +994,9 @@ def generate_variant(
                     tremor_gyro_rms = 0.0
                     tremor_score = 0
 
+            if allowed_scores is not None and tremor_score not in allowed_scores:
+                continue
+
             X_tremor_list.append(win_tremor.T.astype(np.float32))
             y_tremor_list.append(ws.label - 1)
             subj_tremor_list.append(ws.subject_id)
@@ -1029,10 +1041,12 @@ def generate_variant(
         method_cache_line = "  - Tremor cache generation: skipped (parkinson-only mode)"
         method_har_line = "  - HAR branch: raw -> resample -> zscore (no tremor simulation)"
         method_tremor_line = "  - Tremor branch: raw -> resample (no tremor simulation)"
+        source_rule_line = "  - Sources included: PD only"
     else:
         method_cache_line = "  - Tremor cache generation: precompute_tremor_cache_with_parkinson_model"
         method_har_line = "  - HAR branch: raw -> tremor/aug -> resample -> zscore -> augment_window"
         method_tremor_line = "  - Tremor branch: raw -> tremor/aug -> resample (no zscore, no augment_window)"
+        source_rule_line = "  - Sources included: mHealth + CT (PD excluded)"
 
     info_lines = [
         "=" * 80,
@@ -1064,6 +1078,8 @@ def generate_variant(
         "  - Sensor policies: tremor_parkinson_config.py",
         method_har_line,
         method_tremor_line,
+        source_rule_line,
+        f"  - Output score filter: {sorted(allowed_scores) if allowed_scores is not None else 'none'}",
         "",
         "Merge-specific adaptation:",
         "  - Parkinson data mapped from Upper Right Cal1..Cal9 to arm sensors",
