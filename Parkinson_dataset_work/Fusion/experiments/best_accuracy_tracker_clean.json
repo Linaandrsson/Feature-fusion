@@ -1,0 +1,24 @@
+{
+  "clean__ALL-ALR-MLL-MLR-MHd_fs50": {
+    "best_test_accuracy": 0.892179,
+    "best_test_f1_macro": 0.892267,
+    "best_test_f1_weighted": 0.892398,
+    "seed": 41,
+    "timestamp": "2026-04-19 11:16:59",
+    "model_file": "clean__ALL-ALR-MLL-MLR-MHd_fs50_best.pth",
+    "sensors": [
+      "Acc_LL",
+      "Acc_LR",
+      "Mag_LL",
+      "Mag_LR",
+      "Mag_head"
+    ],
+    "sensors_fs": {
+      "Acc_LL": 50,
+      "Acc_LR": 50,
+      "Mag_LL": 50,
+      "Mag_LR": 50,
+      "Mag_head": 50
+    }
+  }
+}

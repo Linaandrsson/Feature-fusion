@@ -1,0 +1,35 @@
+{
+  "timestamp": "2026-04-19 10:43:24",
+  "eval_tag": "eval_mixed",
+  "data_variants": [
+    "s2_w2_fs50_tremor_clean",
+    "s2_w2_fs50_tremor_mild_mod",
+    "s2_w2_fs50_tremor_mod_severe"
+  ],
+  "model_file": "mixed__ALL-ALR-MLL-MLR-MHd_fs50_best.pth",
+  "config_id": "mixed__ALL-ALR-MLL-MLR-MHd_fs50",
+  "sensors": [
+    "Acc_LL",
+    "Acc_LR",
+    "Mag_LL",
+    "Mag_LR",
+    "Mag_head"
+  ],
+  "sensors_fs": {
+    "Acc_LL": 50,
+    "Acc_LR": 50,
+    "Mag_LL": 50,
+    "Mag_LR": 50,
+    "Mag_head": 50
+  },
+  "trained_test_acc": 0.888268,
+  "trained_test_f1": 0.891137,
+  "trained_seed": 41,
+  "eval_train_acc": 0.991565,
+  "eval_train_f1_macro": 0.991649,
+  "eval_val_acc": 0.995595,
+  "eval_val_f1_macro": 0.996312,
+  "eval_test_acc": 0.888268,
+  "eval_test_f1_macro": 0.891137,
+  "eval_test_f1_weighted": 0.888371
+}

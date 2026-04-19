@@ -42,7 +42,7 @@ from typing import List, Dict, Tuple, Optional
 # -------------------------------
 # Reproducibility
 # -------------------------------
-SEED = 42
+SEED = 41
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
@@ -62,6 +62,14 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent
 base_data_dir = PROJECT_ROOT / "Data" / "Tremor_datagenerator_files"
 
+
+def ensure_valid_cwd() -> None:
+    """Restore cwd if the original working directory disappeared (disk remount)."""
+    try:
+        os.getcwd()
+    except FileNotFoundError:
+        os.chdir(SCRIPT_DIR)
+
 # Tremor variants (combined as augmentations)
 tremor_variants = ["s2_w2_fs50_tremor_clean", "s2_w2_fs50_tremor_mild_mod", "s2_w2_fs50_tremor_mod_severe"]
 # Optional tag for report folder name.
@@ -71,18 +79,26 @@ ABLATION_REPORT_TAG = "mixed"
 embeddings_folder_name = "Activity_ExtractedFeatures"  # Folder name where CNN embeddings are stored
 
 # Available sensors (ablation will test subsets of these)
-ALL_SENSORS = ["Acc_arm", "Gyro_arm", "Mag_arm"]
+ALL_SENSORS = [
+    "Acc_LL", "Acc_LR", "Acc_UL", "Acc_UR", "Acc_head",
+    "Gyro_LL", "Gyro_LR", "Gyro_UL", "Gyro_UR", "Gyro_head",
+    "Mag_LL", "Mag_LR", "Mag_UL", "Mag_UR", "Mag_head",
+]
 
-# Subject-based split configuration (must match feature extractor policy)
-HOLDOUT_SUBJECTS = [1]  # Never used in train/val/test for fusion model development
-TRAIN_SUBJECTS = [2, 3, 4, 5, 10, 11, 12, 14, 16, 17, 20, 21, 22, 23, 24, 26, 28, 29]
-VAL_SUBJECTS = [6, 8, 13, 15, 25]
-TEST_SUBJECTS = [7, 9, 18, 19, 27]
+# Subject-based split configuration (must match extraction policy)
+# CT subjects are 1..19 for clean/mild/mod_severe variants.
+HOLDOUT_SUBJECTS: List[int] = [1, 14, 19]
+VAL_SUBJECTS = [4, 9, 16]
+TEST_SUBJECTS = [2, 7, 11]
+
+# Optional explicit TRAIN subjects.
+# If None, computed dynamically as: all observed subjects minus HOLDOUT/VAL/TEST.
+TRAIN_SUBJECTS_OVERRIDE: Optional[List[int]] = None
 
 # -------------------------------
 # Sensor Ablation Configuration
 # -------------------------------
-ABLATION_K = [len(ALL_SENSORS)]  # List of subset sizes to test (e.g., [2, 3] tests all 2-sensor and 3-sensor combos)
+ABLATION_K = [6]  # List of subset sizes to test (e.g., [2, 3] tests all 2-sensor and 3-sensor combos)
                      # Set to [len(ALL_SENSORS)] to test full sensor set only
 
 print(f"\nUsing tremor variants as augmentations:")
@@ -90,7 +106,7 @@ for variant in tremor_variants:
     print(f"  - {variant}")
 print("\nUsing strict subject-based split for fusion:")
 print(f"  HOLDOUT={HOLDOUT_SUBJECTS}")
-print(f"  TRAIN={TRAIN_SUBJECTS}")
+print(f"  TRAIN=dynamic (all observed minus HOLDOUT/VAL/TEST)")
 print(f"  VAL={VAL_SUBJECTS}")
 print(f"  TEST={TEST_SUBJECTS}")
 
@@ -117,13 +133,12 @@ alpha_floor = 0.05
 
 # Classifier head
 head_hidden_dims = (64, 64)
-head_dropout = 0.4
+head_dropout = 0.5
 
 # -------------------------------
 # Logging
 # -------------------------------
 LOG_DIR = SCRIPT_DIR / "tremor_logs"
-LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "tremor_fusion_ablation.jsonl"
 
 _tag = ABLATION_REPORT_TAG.strip()
@@ -134,7 +149,87 @@ if _tag:
 else:
     ABLATION_REPORT_DIR = LOG_DIR / "ablation_reports"
 
-ABLATION_REPORT_DIR.mkdir(exist_ok=True)
+LOCAL_BASE_DIR = Path.home() / "Desktop"
+if not LOCAL_BASE_DIR.exists():
+    LOCAL_BASE_DIR = Path.home()
+
+LOCAL_LOG_DIR = LOCAL_BASE_DIR / "tremor_fusion_emergency_logs"
+LOCAL_LOG_FILE = LOCAL_LOG_DIR / LOG_FILE.name
+if _tag:
+    LOCAL_ABLATION_REPORT_DIR = LOCAL_LOG_DIR / f"ablation_reports_{_safe_tag}"
+else:
+    LOCAL_ABLATION_REPORT_DIR = LOCAL_LOG_DIR / "ablation_reports"
+
+ACTIVE_LOG_FILE = LOG_FILE
+ACTIVE_ABLATION_REPORT_DIR = ABLATION_REPORT_DIR
+
+
+def activate_local_log_fallback(reason: object) -> None:
+    """Switch logging/report outputs to local disk if external path fails."""
+    global ACTIVE_LOG_FILE, ACTIVE_ABLATION_REPORT_DIR
+    ACTIVE_LOG_FILE = LOCAL_LOG_FILE
+    ACTIVE_ABLATION_REPORT_DIR = LOCAL_ABLATION_REPORT_DIR
+    ACTIVE_ABLATION_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    ACTIVE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    print(
+        "  ! Logging fallback active. Writing to local path:",
+        ACTIVE_ABLATION_REPORT_DIR,
+    )
+    print(f"    Reason: {reason}")
+
+
+def initialize_log_paths() -> None:
+    """Initialize preferred log paths, falling back to local paths if needed."""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        ABLATION_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        activate_local_log_fallback(e)
+
+
+def append_jsonl_with_fallback(payload: Dict) -> Path:
+    """Append a JSONL row and auto-fallback to local storage on write errors."""
+    try:
+        with open(ACTIVE_LOG_FILE, "a") as f:
+            f.write(json.dumps(payload) + "\n")
+        return ACTIVE_LOG_FILE
+    except Exception as e:
+        activate_local_log_fallback(e)
+        with open(ACTIVE_LOG_FILE, "a") as f:
+            f.write(json.dumps(payload) + "\n")
+        return ACTIVE_LOG_FILE
+
+
+def save_figure_with_fallback(fig, filename: str) -> Path:
+    """Save a figure to report dir and fallback locally if save fails."""
+    target = ACTIVE_ABLATION_REPORT_DIR / filename
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(target, dpi=150, bbox_inches="tight")
+        return target
+    except Exception as e:
+        activate_local_log_fallback(e)
+        target = ACTIVE_ABLATION_REPORT_DIR / filename
+        fig.savefig(target, dpi=150, bbox_inches="tight")
+        return target
+
+
+def open_report_with_fallback(filename: str):
+    """Open a report file for writing, with automatic local fallback."""
+    report_path = ACTIVE_ABLATION_REPORT_DIR / filename
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(report_path, "w")
+        return report_path, handle
+    except Exception as e:
+        activate_local_log_fallback(e)
+        report_path = ACTIVE_ABLATION_REPORT_DIR / filename
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(report_path, "w")
+        return report_path, handle
+
+
+initialize_log_paths()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -155,7 +250,8 @@ def load_combined_tremor_embeddings(sensor_name: str) -> Dict[str, np.ndarray]:
     
     Source files may contain split leakage from extraction stage.
     To avoid leakage, this function concatenates all rows from each variant,
-    then re-splits by subject IDs using TRAIN_SUBJECTS/VAL_SUBJECTS/TEST_SUBJECTS.
+    then re-splits by subject IDs using VAL_SUBJECTS/TEST_SUBJECTS and
+    TRAIN_SUBJECTS_OVERRIDE (or dynamic train subjects).
     HOLDOUT_SUBJECTS are explicitly excluded.
     
     Returns dict with combined (concatenated) data:
@@ -197,19 +293,29 @@ def load_combined_tremor_embeddings(sensor_name: str) -> Dict[str, np.ndarray]:
     y_all = np.concatenate(all_activities, axis=0)
     subj_all = np.concatenate(all_subjects, axis=0)
 
+    observed_subjects = sorted(np.unique(subj_all).astype(int).tolist())
+    forbidden_subjects = set(HOLDOUT_SUBJECTS) | set(VAL_SUBJECTS) | set(TEST_SUBJECTS)
+    if TRAIN_SUBJECTS_OVERRIDE is None:
+        train_subjects_cfg = [s for s in observed_subjects if s not in forbidden_subjects]
+    else:
+        train_subjects_cfg = sorted(TRAIN_SUBJECTS_OVERRIDE)
+
+    if len(train_subjects_cfg) == 0:
+        raise ValueError("No train subjects available after applying HOLDOUT/VAL/TEST")
+
     holdout_mask = np.isin(subj_all, HOLDOUT_SUBJECTS)
-    train_mask = np.isin(subj_all, TRAIN_SUBJECTS)
+    train_mask = np.isin(subj_all, train_subjects_cfg)
     val_mask = np.isin(subj_all, VAL_SUBJECTS)
     test_mask = np.isin(subj_all, TEST_SUBJECTS)
 
     # Safety checks: disjoint subject sets and no holdout leakage.
-    if set(TRAIN_SUBJECTS) & set(VAL_SUBJECTS):
+    if set(train_subjects_cfg) & set(VAL_SUBJECTS):
         raise ValueError("TRAIN_SUBJECTS and VAL_SUBJECTS overlap")
-    if set(TRAIN_SUBJECTS) & set(TEST_SUBJECTS):
+    if set(train_subjects_cfg) & set(TEST_SUBJECTS):
         raise ValueError("TRAIN_SUBJECTS and TEST_SUBJECTS overlap")
     if set(VAL_SUBJECTS) & set(TEST_SUBJECTS):
         raise ValueError("VAL_SUBJECTS and TEST_SUBJECTS overlap")
-    if (set(HOLDOUT_SUBJECTS) & set(TRAIN_SUBJECTS)) or (set(HOLDOUT_SUBJECTS) & set(VAL_SUBJECTS)) or (set(HOLDOUT_SUBJECTS) & set(TEST_SUBJECTS)):
+    if (set(HOLDOUT_SUBJECTS) & set(train_subjects_cfg)) or (set(HOLDOUT_SUBJECTS) & set(VAL_SUBJECTS)) or (set(HOLDOUT_SUBJECTS) & set(TEST_SUBJECTS)):
         raise ValueError("HOLDOUT_SUBJECTS overlap with TRAIN/VAL/TEST")
 
     Z_train = Z_all[train_mask]
@@ -224,8 +330,8 @@ def load_combined_tremor_embeddings(sensor_name: str) -> Dict[str, np.ndarray]:
     test_subjects = sorted(np.unique(subj_all[test_mask]).astype(int).tolist())
     holdout_subjects = sorted(np.unique(subj_all[holdout_mask]).astype(int).tolist())
 
-    if train_subjects != sorted(TRAIN_SUBJECTS):
-        raise ValueError(f"Train subjects mismatch: {train_subjects} != {sorted(TRAIN_SUBJECTS)}")
+    if train_subjects != sorted(train_subjects_cfg):
+        raise ValueError(f"Train subjects mismatch: {train_subjects} != {sorted(train_subjects_cfg)}")
     if val_subjects != sorted(VAL_SUBJECTS):
         raise ValueError(f"Val subjects mismatch: {val_subjects} != {sorted(VAL_SUBJECTS)}")
     if test_subjects != sorted(TEST_SUBJECTS):
@@ -483,7 +589,8 @@ def train_sensor_combination(
         print(f"  Mode: CONCAT BASELINE")
     
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    ensure_valid_cwd()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=3e-4)
     
     print(f"\n{model}")
     
@@ -647,8 +754,7 @@ def train_sensor_combination(
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     
     # Save confusion matrix to ablation report folder
-    cm_filename = ABLATION_REPORT_DIR / f"cm_{experiment_id}.png"
-    plt.savefig(cm_filename, dpi=150, bbox_inches='tight')
+    cm_filename = save_figure_with_fallback(fig, f"cm_{experiment_id}.png")
     plt.close()
     print(f"  ✓ Confusion matrix saved to {cm_filename}")
     
@@ -687,11 +793,10 @@ def train_sensor_combination(
     
     # Log run results
     try:
-        with open(LOG_FILE, "a") as f:
-            f.write(json.dumps(results) + "\n")
-        print(f"  ✓ Logged to {LOG_FILE}")
+        log_target = append_jsonl_with_fallback(results)
+        print(f"  ✓ Logged to {log_target}")
     except Exception as e:
-        print(f"  ✗ Warning: Could not write to {LOG_FILE}: {e}")
+        print(f"  ✗ Warning: Could not write JSONL log: {e}")
     
     print("\n" + "="*70)
     print(f"Combination complete: {sensors}")
@@ -708,12 +813,13 @@ def main():
     print("="*70)
     print("Tremor Sensor Ablation Study")
     print("="*70)
+    ensure_valid_cwd()
     print(f"\nTremor variants (combined as augmentations):")
     for variant in tremor_variants:
         print(f"  - {variant}")
     print("\nSubject split policy:")
     print(f"  HOLDOUT={HOLDOUT_SUBJECTS}")
-    print(f"  TRAIN={TRAIN_SUBJECTS}")
+    print(f"  TRAIN=dynamic (all observed minus HOLDOUT/VAL/TEST)")
     print(f"  VAL={VAL_SUBJECTS}")
     print(f"  TEST={TEST_SUBJECTS}")
     
@@ -862,8 +968,9 @@ def main():
     print(f"{'='*70}")
     
     # Save summary report
-    report_file = ABLATION_REPORT_DIR / f"tremor_ablation_k{ablation_k_list}_report_{run_timestamp}.txt"
-    with open(report_file, "w") as f:
+    report_filename = f"tremor_ablation_k{ablation_k_list}_report_{run_timestamp}.txt"
+    report_file, report_handle = open_report_with_fallback(report_filename)
+    with report_handle as f:
         f.write("="*70 + "\n")
         f.write("TREMOR SENSOR ABLATION STUDY RESULTS\n")
         f.write("="*70 + "\n\n")
@@ -875,9 +982,9 @@ def main():
         f.write("Tremor variants used:\n")
         for variant in tremor_variants:
             f.write(f"  - {variant}\n")
-        f.write("\nSplits: using train/val/test from extracted embedding files\n\n")
+        f.write("\nSplits: strict subject-based re-splitting from configured subject IDs\n\n")
         f.write(f"Holdout subjects (excluded): {HOLDOUT_SUBJECTS}\n")
-        f.write(f"Train subjects: {TRAIN_SUBJECTS}\n")
+        f.write(f"Train subjects: dynamic (all observed minus HOLDOUT/VAL/TEST)\n")
         f.write(f"Val subjects: {VAL_SUBJECTS}\n")
         f.write(f"Test subjects: {TEST_SUBJECTS}\n\n")
         

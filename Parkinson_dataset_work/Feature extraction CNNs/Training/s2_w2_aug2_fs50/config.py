@@ -41,6 +41,7 @@ output_variant_name = "fs50_tremor_mixed_all3"  # Combined output from all 3 aug
 
 TEST_SUBJECTS = [2, 7, 11]              # 2 CT (for testing)
 VAL_SUBJECTS = [4, 9, 16]               # 2 CT (for validation)
+HOLDOUT_SUBJECTS = [1,14,19] 
 # TRAIN_SUBJECTS = all others: [1, 3, 5, 6, 8, 10-19] (15 CT subjects)
 
 # ============================================================

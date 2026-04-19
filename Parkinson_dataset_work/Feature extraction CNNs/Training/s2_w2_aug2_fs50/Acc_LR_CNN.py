@@ -17,7 +17,7 @@ script_dir = Path(__file__).parent
 # -------------------------------
 # Config
 # -------------------------------
-sensor_name = "Acc_LL"  # Sensor file name without extension (Parkinson LL = Lower Left)
+sensor_name = "Acc_LR"  # Sensor file name without extension (Parkinson LL = Lower Left)
 num_channels = 3
 
 batch_size = 64

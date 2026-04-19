@@ -44,7 +44,7 @@ import tremor_parkinson_config as pk_config
 # CONFIG - Basic parameters
 # ============================================================
 ORIGINAL_FS = 50        # original sampling rate in Parkinson data (Hz)
-FS = 50                 # target sampling rate (Hz)
+FS = 40                 # target sampling rate (Hz)
 WINDOW_SEC = 2.0        # window length in seconds
 STRIDE_SEC = 2.0        # stride in seconds
 AUG_SIZE = 2            # number of augmented copies per window
@@ -699,10 +699,22 @@ def generate_variant(
 
                     # Get tremor labels
                     if sensor_name in pk_config.TREMOR_FREE_SENSORS:
+                        # Head sensors: no actual tremor, but inherit severity score from arm for filtering
                         tremor_freq = 0.0
                         tremor_acc_rms = 0.0
                         tremor_gyro_rms = 0.0
-                        tremor_score = 0
+                        # Use severity score from arm cache for label consistency
+                        severity_cache_entry = tremor_cache.get((global_w_idx, severity_body_part))
+                        if severity_cache_entry is not None and GENERATE_TREMOR:
+                            severity_meta = severity_cache_entry.get("meta", {})
+                            tremor_score = int(
+                                severity_meta.get(
+                                    "sampled_score",
+                                    severity_meta.get("score", 0)
+                                )
+                            )
+                        else:
+                            tremor_score = 0
                     else:
                         signal_cache_entry = tremor_cache.get((global_w_idx, signal_body_part))
                         if signal_cache_entry is not None and GENERATE_TREMOR:

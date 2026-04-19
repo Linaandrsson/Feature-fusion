@@ -1,33 +1,33 @@
-"""
-Generic feature extraction script for single sensor.
+"""Extract embeddings for one sensor from one tremor variant."""
 
-Usage:
-    python extract_features.py --sensor Acc_ankle
-    
-This script:
-1. Loads a trained model from Models/
-2. Loads sensor data from specified variant
-3. Extracts embeddings for train/val/test splits
-4. Saves features to variant_dir/ExtractedFeatures/
-"""
+import argparse
+from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-from pathlib import Path
-import argparse
-import sys
 
-# Import configuration
 from config_extraction import (
-    parent_dir, variant_dir, models_dir, seq_len, batch_size,
-    get_model_path, get_data_path, output_dir, SENSORS
+    HOLDOUT_SUBJECTS,
+    SENSORS,
+    TEST_SUBJECTS,
+    VAL_SUBJECTS,
+    batch_size,
+    get_data_path,
+    get_model_path,
+    get_output_dir,
+    get_variant_dir,
+    models_dir,
+    overwrite_split_files,
+    seq_len,
+    split_mode,
 )
 
 
 class IMUCNN(nn.Module):
-    """CNN model for IMU feature extraction (must match training architecture)."""
+    """CNN architecture matching the training scripts in s2_w2_aug2_fs50."""
+
     def __init__(self, num_classes: int, seq_len: int, num_channels: int):
         super().__init__()
         self.features = nn.Sequential(
@@ -35,15 +35,14 @@ class IMUCNN(nn.Module):
             nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            nn.Dropout(0.2),
-
-            nn.Conv1d(128, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
+            nn.Dropout(0.4),
+            nn.Conv1d(128, 256, kernel_size=5, padding=2),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.3),
         )
-        self.flattened_dim = (seq_len // 4) * 128
+        self.flattened_dim = (seq_len // 4) * 256
         self.flatten = nn.Flatten()
         self.fc_embed = nn.Linear(self.flattened_dim, 128)
         self.drop_cls = nn.Dropout(0.5)
@@ -52,8 +51,7 @@ class IMUCNN(nn.Module):
     def extract_features(self, x):
         x = self.features(x)
         x = self.flatten(x)
-        z = self.fc_embed(x)
-        return z
+        return self.fc_embed(x)
 
     def forward(self, x):
         z = self.extract_features(x)
@@ -61,73 +59,128 @@ class IMUCNN(nn.Module):
         return self.fc_cls(z)
 
 
-def load_data(sensor_name: str, num_channels: int):
-    """Load sensor data and splits."""
-    # Load sensor data
-    data_path = get_data_path(sensor_name)
+def _to_1d_int(arr) -> np.ndarray:
+    arr = np.asarray(arr)
+    if arr.ndim == 0:
+        arr = arr.reshape(1)
+    return arr.astype(int)
+
+
+def _load_idx_file(idx_file: Path) -> np.ndarray:
+    """Load one index file; return empty array if file is intentionally empty."""
+    if not idx_file.exists() or idx_file.stat().st_size == 0:
+        return np.array([], dtype=int)
+    return _to_1d_int(np.loadtxt(idx_file, dtype=int))
+
+
+def _load_or_create_split_indices(subjects: np.ndarray, variant_dir: Path):
+    split_dir = variant_dir / "splits"
+    train_file = split_dir / "train_idx.txt"
+    val_file = split_dir / "val_idx.txt"
+    test_file = split_dir / "test_idx.txt"
+    holdout_file = split_dir / "holdout_idx.txt"
+
+    if split_mode == "existing_files":
+        if not (train_file.exists() and val_file.exists() and test_file.exists()):
+            raise FileNotFoundError(
+                f"split_mode='existing_files' but split files missing in {split_dir}"
+            )
+        train_idx = _load_idx_file(train_file)
+        val_idx = _load_idx_file(val_file)
+        test_idx = _load_idx_file(test_file)
+        holdout_idx = _load_idx_file(holdout_file)
+        return train_idx, val_idx, test_idx, holdout_idx, "existing_files"
+
+    if split_mode != "subject_based":
+        raise ValueError(f"Unknown split_mode: {split_mode}")
+
+    test_mask = np.isin(subjects, TEST_SUBJECTS)
+    val_mask = np.isin(subjects, VAL_SUBJECTS)
+    holdout_mask = np.isin(subjects, HOLDOUT_SUBJECTS)
+    train_mask = ~(test_mask | val_mask | holdout_mask)
+
+    train_idx = np.where(train_mask)[0]
+    val_idx = np.where(val_mask)[0]
+    test_idx = np.where(test_mask)[0]
+    holdout_idx = np.where(holdout_mask)[0]
+
+    # Parkinson-only variant does not include CT subject IDs from train/val/test config.
+    # Keep these samples as inference/test to avoid creating a synthetic train split.
+    if len(val_idx) == 0 and len(test_idx) == 0:
+        train_idx = np.array([], dtype=int)
+        val_idx = np.array([], dtype=int)
+        test_idx = np.arange(len(subjects), dtype=int)
+        holdout_idx = np.array([], dtype=int)
+
+    if overwrite_split_files or not (train_file.exists() and val_file.exists() and test_file.exists()):
+        split_dir.mkdir(parents=True, exist_ok=True)
+        np.savetxt(train_file, train_idx, fmt="%d")
+        np.savetxt(val_file, val_idx, fmt="%d")
+        np.savetxt(test_file, test_idx, fmt="%d")
+        np.savetxt(holdout_file, holdout_idx, fmt="%d")
+
+    return train_idx, val_idx, test_idx, holdout_idx, "subject_based"
+
+
+def load_data(variant_name: str, sensor_name: str, num_channels: int):
+    """Load sensor data and apply split indices for one variant."""
+    data_path = get_data_path(variant_name, sensor_name)
+    variant_dir = get_variant_dir(variant_name)
     if not data_path.exists():
         raise FileNotFoundError(f"Data not found: {data_path}")
-    
-    data = np.loadtxt(data_path, delimiter=",")
-    
-    # Data format (tremor-compatible): 
-    # [...sensor data...] | [-7] activity | [-6] subject | [-5] base_idx | 
-    # [-4] tremor_freq | [-3] tremor_acc_rms | [-2] tremor_gyro_rms | [-1] tremor_score
-    X = data[:, :-7]  # Sensor data only (all columns except last 7)
-    y_activity = data[:, -7].astype(int) - 1  # Activity label 1..12 -> 0..11
-    y_subject = data[:, -6].astype(int)  # Subject ID
-    base_idx = data[:, -5].astype(int)  # Base window index
-    tremor_freq = data[:, -4].astype(np.float32)  # Tremor frequency
-    tremor_acc_rms = data[:, -3].astype(np.float32)  # Tremor ACC RMS
-    tremor_gyro_rms = data[:, -2].astype(np.float32)  # Tremor Gyro RMS
-    tremor_score = data[:, -1].astype(int)  # Tremor score 0-4
-    
+
+    data = np.loadtxt(str(data_path), delimiter=",")
+    X = data[:, :-7]
+    y_activity = data[:, -7].astype(int) - 1
+    y_subject = data[:, -6].astype(int)
+    base_idx = data[:, -5].astype(int)
+    tremor_freq = data[:, -4].astype(np.float32)
+    tremor_acc_rms = data[:, -3].astype(np.float32)
+    tremor_gyro_rms = data[:, -2].astype(np.float32)
+    tremor_score = data[:, -1].astype(int)
+
     X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
-    
-    # Load splits from parent directory
-    train_idx = np.loadtxt(parent_dir / "train_idx.txt", dtype=int)
-    val_idx = np.loadtxt(parent_dir / "val_idx.txt", dtype=int)
-    test_idx = np.loadtxt(parent_dir / "test_idx.txt", dtype=int)
-    
-    # Split all data
-    X_train, y_activity_train = X[train_idx], y_activity[train_idx]
-    X_val, y_activity_val = X[val_idx], y_activity[val_idx]
-    X_test, y_activity_test = X[test_idx], y_activity[test_idx]
-    
-    # Also split metadata
-    meta_train = {
-        "activity": y_activity_train,
-        "subject": y_subject[train_idx],
-        "base_idx": base_idx[train_idx],
-        "tremor_freq": tremor_freq[train_idx],
-        "tremor_acc_rms": tremor_acc_rms[train_idx],
-        "tremor_gyro_rms": tremor_gyro_rms[train_idx],
-        "tremor_score": tremor_score[train_idx],
+
+    train_idx, val_idx, test_idx, holdout_idx, split_source = _load_or_create_split_indices(
+        y_subject, variant_dir
+    )
+
+    meta_all = {
+        "activity": y_activity,
+        "subject": y_subject,
+        "base_idx": base_idx,
+        "tremor_freq": tremor_freq,
+        "tremor_acc_rms": tremor_acc_rms,
+        "tremor_gyro_rms": tremor_gyro_rms,
+        "tremor_score": tremor_score,
     }
-    meta_val = {
-        "activity": y_activity_val,
-        "subject": y_subject[val_idx],
-        "base_idx": base_idx[val_idx],
-        "tremor_freq": tremor_freq[val_idx],
-        "tremor_acc_rms": tremor_acc_rms[val_idx],
-        "tremor_gyro_rms": tremor_gyro_rms[val_idx],
-        "tremor_score": tremor_score[val_idx],
-    }
-    meta_test = {
-        "activity": y_activity_test,
-        "subject": y_subject[test_idx],
-        "base_idx": base_idx[test_idx],
-        "tremor_freq": tremor_freq[test_idx],
-        "tremor_acc_rms": tremor_acc_rms[test_idx],
-        "tremor_gyro_rms": tremor_gyro_rms[test_idx],
-        "tremor_score": tremor_score[test_idx],
-    }
-    
-    return (X_train, X_val, X_test), (meta_train, meta_val, meta_test)
+
+    def select(idx: np.ndarray):
+        return X[idx], {k: v[idx] for k, v in meta_all.items()}
+
+    X_train, meta_train = select(train_idx)
+    X_val, meta_val = select(val_idx)
+    X_test, meta_test = select(test_idx)
+    X_holdout, meta_holdout = select(holdout_idx)
+
+    return (
+        (X_train, X_val, X_test, X_holdout),
+        (meta_train, meta_val, meta_test, meta_holdout),
+        split_source,
+    )
 
 
-def extract_embeddings(model, loader, device):
-    """Extract embeddings from data loader."""
+def extract_embeddings(model, X_split: np.ndarray, y_split: np.ndarray, device: torch.device):
+    """Extract embeddings for one split; returns empty arrays for empty splits."""
+    if len(X_split) == 0:
+        return np.empty((0, 128), dtype=np.float32), np.empty((0,), dtype=np.int64)
+
+    loader = DataLoader(
+        TensorDataset(torch.tensor(X_split), torch.tensor(y_split)),
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
     model.eval()
     feats = []
     labs = []
@@ -137,100 +190,98 @@ def extract_embeddings(model, loader, device):
             z = model.extract_features(xb)
             feats.append(z.cpu().numpy())
             labs.append(yb.numpy())
+
     return np.concatenate(feats, axis=0), np.concatenate(labs, axis=0)
 
 
-def main(sensor_name: str):
-    """Extract features for a single sensor."""
-    
+def main(sensor_name: str, variant_name: str):
+    """Extract features for one sensor in one variant."""
     if sensor_name not in SENSORS:
         raise ValueError(f"Unknown sensor: {sensor_name}. Available: {list(SENSORS.keys())}")
-    
+
     num_channels = SENSORS[sensor_name]["num_channels"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    print(f"\n{'='*60}")
-    print(f"Extracting features for: {sensor_name}")
-    print(f"{'='*60}")
-    print(f"Parent dir (splits): {parent_dir}")
-    print(f"Variant dir (data):  {variant_dir}")
-    print(f"Models dir:          {models_dir}")
-    print(f"Output dir:          {output_dir}")
-    
-    # Load data
-    print(f"\n[1/4] Loading data...")
-    (X_train, X_val, X_test), (meta_train, meta_val, meta_test) = load_data(sensor_name, num_channels)
-    print(f"  Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
-    
-    # Create data loaders (no shuffling for alignment)
-    # Use activity labels for training (even though we're extracting features for tremor later)
-    train_loader = DataLoader(
-        TensorDataset(torch.tensor(X_train), torch.tensor(meta_train["activity"])),
-        batch_size=batch_size, shuffle=False
+    variant_dir = get_variant_dir(variant_name)
+    output_dir = get_output_dir(variant_name)
+
+    print(f"\n{'=' * 70}")
+    print(f"Extracting features for sensor={sensor_name}, variant={variant_name}")
+    print(f"{'=' * 70}")
+    print(f"Variant dir: {variant_dir}")
+    print(f"Models dir:  {models_dir}")
+    print(f"Output dir:  {output_dir}")
+
+    print("\n[1/4] Loading data and split indices...")
+    (X_train, X_val, X_test, X_holdout), (meta_train, meta_val, meta_test, meta_holdout), split_source = (
+        load_data(variant_name, sensor_name, num_channels)
     )
-    val_loader = DataLoader(
-        TensorDataset(torch.tensor(X_val), torch.tensor(meta_val["activity"])),
-        batch_size=batch_size, shuffle=False
+    print(f"  Split source: {split_source}")
+    print(
+        f"  Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}, Holdout: {len(X_holdout)}"
     )
-    test_loader = DataLoader(
-        TensorDataset(torch.tensor(X_test), torch.tensor(meta_test["activity"])),
-        batch_size=batch_size, shuffle=False
-    )
-    
-    num_classes = len(np.unique(meta_train["activity"]))
-    
-    # Load model
-    print(f"\n[2/4] Loading model...")
+
+    print("\n[2/4] Loading model checkpoint...")
     model_path = get_model_path(sensor_name)
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
-    
-    model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
+
     ckpt = torch.load(model_path, map_location=device)
-    model.load_state_dict(ckpt["model_state_dict"])
+    if "model_state_dict" in ckpt:
+        state_dict = ckpt["model_state_dict"]
+        num_classes = int(ckpt.get("num_classes", 12))
+    else:
+        state_dict = ckpt
+        num_classes = 12
+
+    model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
+    model.load_state_dict(state_dict)
     print(f"  Loaded from: {model_path}")
-    
-    # Extract features
-    print(f"\n[3/4] Extracting features...")
-    Z_train, y_train_check = extract_embeddings(model, train_loader, device)
-    Z_val, y_val_check = extract_embeddings(model, val_loader, device)
-    Z_test, y_test_check = extract_embeddings(model, test_loader, device)
-    
+
+    print("\n[3/4] Extracting embeddings...")
+    Z_train, _ = extract_embeddings(model, X_train, meta_train["activity"], device)
+    Z_val, _ = extract_embeddings(model, X_val, meta_val["activity"], device)
+    Z_test, _ = extract_embeddings(model, X_test, meta_test["activity"], device)
+    Z_holdout, _ = extract_embeddings(model, X_holdout, meta_holdout["activity"], device)
     print(f"  Train embeddings: {Z_train.shape}")
     print(f"  Val embeddings:   {Z_val.shape}")
     print(f"  Test embeddings:  {Z_test.shape}")
-    
-    # Save features with tremor-compatible format
-    print(f"\n[4/4] Saving features...")
+    print(f"  Holdout embeddings: {Z_holdout.shape}")
+
+    print("\n[4/4] Saving embeddings...")
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save in tremor-fusion compatible format (matching extract_tremor_embeddings.py output)
+    output_file = output_dir / f"{sensor_name}_embeddings.npz"
     np.savez_compressed(
-        output_dir / f"{sensor_name}_embeddings.npz",
+        output_file,
         train_embeddings=Z_train,
         val_embeddings=Z_val,
         test_embeddings=Z_test,
-        train_labels=meta_train["tremor_score"],  # For tremor classification
+        holdout_embeddings=Z_holdout,
+        train_labels=meta_train["tremor_score"],
         val_labels=meta_val["tremor_score"],
         test_labels=meta_test["tremor_score"],
-        train_activities=meta_train["activity"],  # Keep activity for reference
+        holdout_labels=meta_holdout["tremor_score"],
+        train_activities=meta_train["activity"],
         val_activities=meta_val["activity"],
         test_activities=meta_test["activity"],
+        holdout_activities=meta_holdout["activity"],
         train_subjects=meta_train["subject"],
         val_subjects=meta_val["subject"],
         test_subjects=meta_test["subject"],
+        holdout_subjects=meta_holdout["subject"],
+        train_base_idx=meta_train["base_idx"],
+        val_base_idx=meta_val["base_idx"],
+        test_base_idx=meta_test["base_idx"],
+        holdout_base_idx=meta_holdout["base_idx"],
     )
-    
-    print(f"  ✓ Saved to: {output_dir / f'{sensor_name}_embeddings.npz'}")
-    print(f"\n{'='*60}")
-    print(f"✓ Feature extraction complete for {sensor_name}")
-    print(f"{'='*60}\n")
+
+    print(f"  Saved: {output_file}")
+    print(f"{'=' * 70}\n")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Extract features for a sensor")
-    parser.add_argument("--sensor", type=str, required=True, 
-                       help=f"Sensor name. Options: {list(SENSORS.keys())}")
+    parser = argparse.ArgumentParser(description="Extract embeddings for one sensor and one variant")
+    parser.add_argument("--sensor", type=str, required=True, help=f"One of: {list(SENSORS.keys())}")
+    parser.add_argument("--variant", type=str, required=True, help="Variant directory name")
     args = parser.parse_args()
-    
-    main(args.sensor)
+
+    main(args.sensor, args.variant)

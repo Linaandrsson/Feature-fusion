@@ -17,7 +17,7 @@ script_dir = Path(__file__).parent
 # -------------------------------
 # Config
 # -------------------------------
-sensor_name = "Acc_LL"  # Sensor file name without extension (Parkinson LL = Lower Left)
+sensor_name = "Mag_head"  # Sensor file name without extension (Parkinson head)
 num_channels = 3
 
 batch_size = 64
@@ -527,5 +527,3 @@ for variant_dir in variant_dirs:
     )
     
     print(f"   ✅ {variant_name}: train={Z_variant_train.shape}, val={Z_variant_val.shape}, test={Z_variant_test.shape} → {variant_feat_path}")
-
-

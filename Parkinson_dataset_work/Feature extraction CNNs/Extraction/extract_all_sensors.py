@@ -1,67 +1,61 @@
-"""
-Extract features for ALL sensors in parallel or sequentially.
-
-Usage:
-    python extract_all_sensors.py
-    
-This will process all sensors defined in config_extraction.py
-"""
+"""Extract embeddings for all configured sensors and variants."""
 
 import subprocess
 import sys
 from pathlib import Path
-from config_extraction import SENSORS
-import time
+
+from config_extraction import SENSORS, variant_names
 
 
 def main():
-    """Extract features for all sensors."""
-    
-    # Get the directory where this script is located
     script_dir = Path(__file__).parent.resolve()
     extract_script = script_dir / "extract_features.py"
-    
-    print(f"\n{'='*60}")
-    print(f"Extracting features for {len(SENSORS)} sensors")
-    print(f"{'='*60}\n")
-    
+    total_jobs = len(variant_names) * len(SENSORS)
+
+    print(f"\n{'=' * 80}")
+    print("Extract embeddings for all sensors and variants")
+    print(f"Sensors: {len(SENSORS)}, Variants: {len(variant_names)}, Total jobs: {total_jobs}")
+    print(f"{'=' * 80}\n")
+
     success = []
     failed = []
-    
-    for i, sensor_name in enumerate(SENSORS.keys(), 1):
-        print(f"[{i}/{len(SENSORS)}] Processing: {sensor_name}")
-        print("-" * 60)
-        
-        try:
-            # Run extraction for this sensor
-            result = subprocess.run(
-                [sys.executable, str(extract_script), "--sensor", sensor_name],
-                check=True,
-                capture_output=False,
-                text=True
-            )
-            success.append(sensor_name)
-            
-        except subprocess.CalledProcessError as e:
-            print(f"✗ Failed to extract features for {sensor_name}")
-            failed.append(sensor_name)
-        
-        print()
-    
-    # Summary
-    print("\n" + "="*60)
+    job_idx = 0
+
+    for variant in variant_names:
+        print(f"\n{'-' * 80}")
+        print(f"Variant: {variant}")
+        print(f"{'-' * 80}")
+        for sensor_name in SENSORS.keys():
+            job_idx += 1
+            print(f"[{job_idx}/{total_jobs}] Sensor={sensor_name}, Variant={variant}")
+            try:
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(extract_script),
+                        "--sensor",
+                        sensor_name,
+                        "--variant",
+                        variant,
+                    ],
+                    check=True,
+                    capture_output=False,
+                    text=True,
+                )
+                success.append((sensor_name, variant))
+            except subprocess.CalledProcessError:
+                print(f"  Failed: sensor={sensor_name}, variant={variant}")
+                failed.append((sensor_name, variant))
+
+    print("\n" + "=" * 80)
     print("SUMMARY")
-    print("="*60)
-    print(f"✓ Success: {len(success)}/{len(SENSORS)}")
-    for s in success:
-        print(f"  - {s}")
-    
+    print("=" * 80)
+    print(f"Success: {len(success)}/{total_jobs}")
     if failed:
-        print(f"\n✗ Failed: {len(failed)}/{len(SENSORS)}")
-        for s in failed:
-            print(f"  - {s}")
-    
-    print("="*60 + "\n")
+        print(f"Failed: {len(failed)}/{total_jobs}")
+        for sensor_name, variant in failed:
+            print(f"  - sensor={sensor_name}, variant={variant}")
+    print("=" * 80 + "\n")
 
 
 if __name__ == "__main__":

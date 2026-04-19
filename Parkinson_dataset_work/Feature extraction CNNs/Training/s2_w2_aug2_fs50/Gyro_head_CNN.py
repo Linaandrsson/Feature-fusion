@@ -9,7 +9,7 @@ from pathlib import Path
 import json
 import sys
 from datetime import datetime
-from config import parent_dir, variant_dirs, seq_len, models_output_dir, load_combined_sensor_data, embeddings_base_dir, embeddings_folder_name
+from config import parent_dir, variant_dirs, seq_len, models_output_dir, load_combined_sensor_data, embeddings_base_dir, embeddings_folder_name, TEST_SUBJECTS, VAL_SUBJECTS, HOLDOUT_SUBJECTS
 
 # Get script directory for saving plots
 script_dir = Path(__file__).parent
@@ -17,7 +17,7 @@ script_dir = Path(__file__).parent
 # -------------------------------
 # Config
 # -------------------------------
-sensor_name = "Acc_LL"  # Sensor file name without extension (Parkinson LL = Lower Left)
+sensor_name = "Gyro_head"  # Sensor file name without extension (Parkinson head)
 num_channels = 3
 
 batch_size = 64
@@ -64,13 +64,13 @@ num_classes = len(np.unique(y))
 # Extract subject IDs from combined data
 subjects = data[:, -6].astype(int)  # Subject ID is in column -6
 
-# Define held-out subjects for validation and testing
-TEST_SUBJECTS = [5, 10]
-VAL_SUBJECTS = [2, 7]
-# Train subjects = all others (1, 3, 4, 6, 8, 9)
+# Use subject splits from config (prevents data leakage, same splits for all sensors)
+# TEST_SUBJECTS = [2, 7, 102, 107]        # Imported from config
+# VAL_SUBJECTS = [4, 9, 104, 109]         # Imported from config
+# TRAIN_SUBJECTS = all others (15 CT + 10 PD = 25 subjects)
 
 # Create splits based on subjects
-train_idx = np.where(~np.isin(subjects, TEST_SUBJECTS + VAL_SUBJECTS))[0]
+train_idx = np.where(~np.isin(subjects, TEST_SUBJECTS + VAL_SUBJECTS + HOLDOUT_SUBJECTS))[0]
 val_idx = np.where(np.isin(subjects, VAL_SUBJECTS))[0]
 test_idx = np.where(np.isin(subjects, TEST_SUBJECTS))[0]
 
@@ -373,6 +373,7 @@ if misclassified_indices:
 # Confusion Matrices (Counts + Normalized)
 # -------------------------------
 labels_display = list(range(1, 13))
+labels_indices = list(range(12))  # Always 12 classes for activity recognition
 
 # Create output directory for confusion matrices
 current_folder = Path(__file__).parent.name  # e.g., "s2_w2_aug2_fs50_mixed_TODO"
@@ -380,24 +381,35 @@ cm_output_dir = Path("/Users/linaandersson/Desktop/master/Confusion_Matrixes") /
 cm_output_dir.mkdir(parents=True, exist_ok=True)
 
 # Confusion Matrix (Counts)
-cm = confusion_matrix(y_test, y_pred)
+# Explicitly include all labels to ensure 12x12 matrix even if some classes absent
+cm = confusion_matrix(y_test, y_pred, labels=labels_indices)
+# Pad to 12x12 if smaller (in case some classes missing from test set)
+if cm.shape != (12, 12):
+    cm_padded = np.zeros((12, 12), dtype=cm.dtype)
+    cm_padded[:cm.shape[0], :cm.shape[1]] = cm
+    cm = cm_padded
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels_display)
 disp.plot(cmap="viridis")
 plt.title("Confusion Matrix (Counts)")
 cm_file = cm_output_dir / f"{sensor_name}_matrix.png"
 plt.savefig(cm_file, dpi=300, bbox_inches='tight')
 print(f"Confusion matrix saved to: {cm_file}")
-plt.show()
+plt.close()
 
 # Confusion Matrix (Normalized)
-cm_norm = confusion_matrix(y_test, y_pred, normalize="true")
+cm_norm = confusion_matrix(y_test, y_pred, labels=labels_indices, normalize="true")
+# Pad to 12x12 if smaller
+if cm_norm.shape != (12, 12):
+    cm_norm_padded = np.zeros((12, 12), dtype=cm_norm.dtype)
+    cm_norm_padded[:cm_norm.shape[0], :cm_norm.shape[1]] = cm_norm
+    cm_norm = cm_norm_padded
 disp_norm = ConfusionMatrixDisplay(confusion_matrix=cm_norm, display_labels=labels_display)
 disp_norm.plot(cmap="viridis", values_format=".2f")
 plt.title("Confusion Matrix (Normalized per Class)")
 cm_norm_file = cm_output_dir / f"{sensor_name}_norm_matrix.png"
 plt.savefig(cm_norm_file, dpi=300, bbox_inches='tight')
 print(f"Normalized confusion matrix saved to: {cm_norm_file}")
-plt.show()
+plt.close()
 
 # -------------------------------
 # Extract embeddings (features) and save to NPZ
@@ -515,5 +527,3 @@ for variant_dir in variant_dirs:
     )
     
     print(f"   ✅ {variant_name}: train={Z_variant_train.shape}, val={Z_variant_val.shape}, test={Z_variant_test.shape} → {variant_feat_path}")
-
-
