@@ -21,6 +21,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import matplotlib
+matplotlib.use("TkAgg")   # interactive popup backend
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -45,7 +48,9 @@ MODEL_PATH: str = (
     # "/experiments/models/mixed/mixed__ALL-ALR-MLL-MLR-MHd_fs50_best.pth"
     # "/Volumes/NO NAME/Master Lina/Code/Parkinson_dataset_work/Fusion"
     # "/experiments/models/clean/clean__ALL-ALR-MLL-MLR-MHd_fs50_best.pth"
-    "/Volumes/NO NAME/Master Lina/Code/Parkinson_dataset_work/Fusion/experiments/models/mild_severe/mild_severe__ALL-ALR-MLL-MLR-MHd_fs50_best.pth"
+    #"/Volumes/NO NAME/Master Lina/Code/Parkinson_dataset_work/Fusion/experiments/models/clean_s4_w4/clean_s4_w4__ALL-ALR-AUL-AUR-AHd-GLL-GLR-GUL-GUR-GHd-MLL-MLR-MUL-MUR-MHd_fs50_best.pth"
+    "/Volumes/NO NAME/Master Lina/Code/Parkinson_dataset_work/Fusion/experiments/models/mixed_s4_w4/mixed_s4_w4__ALL-ALR-AUL-AUR-AHd-GLL-GLR-GUL-GUR-GHd-MLL-MLR-MUL-MUR-MHd_fs50_best.pth"
+    #"/Volumes/NO NAME/Master Lina/Code/Parkinson_dataset_work/Fusion/experiments/models/mixed_v2/mixed_v2__ALL-ALR-AUL-AUR-AHd-GLL-GLR-GUL-GUR-GHd-MLL-MLR-MUL-MUR-MHd_fs50_best.pth"
 )
 
 # Data folders to evaluate on.
@@ -59,12 +64,12 @@ MODEL_PATH: str = (
 #                           "s2_w2_fs50_tremor_mod_severe"]
 #   Real PD patients:      ["s2_w2_fs50_tremor_parkinson"]
 TREMOR_VARIANTS: List[str] = [
-    "s2_w2_fs50_tremor_parkinson",
+    "s4_w4_fs50_tremor_parkinson",
 ]
 
 # Short label for this evaluation run.  Appears in output filenames.
 # Examples: "eval_clean", "eval_pd", "eval_mixed"
-EVAL_TAG: str = "eval_tremor_pd"
+EVAL_TAG: str = "eval_mixed_pd_s4"
 
 # Per-variant subject filter.
 # Keys are folder names from TREMOR_VARIANTS.
@@ -86,7 +91,9 @@ EVAL_TAG: str = "eval_tremor_pd"
 #           "s2_w2_fs50_tremor_clean": [2, 7, 11],
 #       }
 VARIANT_SUBJECTS: Dict[str, Optional[List[int]]] = {
-    "s2_w2_fs50_tremor_clean": [1, 14, 19],   # holdout subjects — never seen during training
+    # Example filters for s4_w4 variants (edit as needed):
+    # "s4_w4_fs50_tremor_clean": [1, 14, 19],
+    # "s4_w4_fs50_tremor_parkinson": None,
 }
 
 
@@ -448,37 +455,11 @@ def evaluate() -> None:
 
     stem = f"{config_id}_{EVAL_TAG}"
 
-    # Confusion matrix
+    # Confusion matrix (save to file — popup is generated later with activity names)
     cm = confusion_matrix(y_true_np, y_pred)
-    fig, axes = plt.subplots(1, 2, figsize=(22, 10))
-
-    ConfusionMatrixDisplay(confusion_matrix=cm,
-                           display_labels=np.arange(num_classes)).plot(
-        ax=axes[0], cmap="Blues", values_format="d"
-    )
-    axes[0].set_title("Absolute Counts", fontsize=14, fontweight="bold")
-    for text in axes[0].texts:
-        text.set_fontsize(8)
-
     cm_norm = cm.astype("float") / cm.sum(axis=1, keepdims=True)
-    ConfusionMatrixDisplay(confusion_matrix=cm_norm,
-                           display_labels=np.arange(num_classes)).plot(
-        ax=axes[1], cmap="Blues", values_format=".1%"
-    )
-    axes[1].set_title("Recall per True Label (% of samples)", fontsize=14, fontweight="bold")
-    for text in axes[1].texts:
-        text.set_fontsize(8)
-
-    fig.suptitle(
-        f"Confusion Matrix — {config_id}\n"
-        f"Eval: {EVAL_TAG}  |  Acc: {acc:.4f}  |  F1(macro): {f1m:.4f}",
-        fontsize=13, fontweight="bold", y=0.98,
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
     cm_path = out_dir / f"{stem}_cm.png"
-    fig.savefig(cm_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"\n  ✓ Confusion matrix saved → {cm_path}")
+    print(f"\n  ✓ Confusion matrix will be saved → {cm_path}")
 
     # JSON result log
     result = {
@@ -503,12 +484,116 @@ def evaluate() -> None:
         json.dump(result, f, indent=2)
     print(f"  ✓ Results saved       → {log_path}")
 
+    # ── Resolve activity names ────────────────────────────────
+    act_names = _get_activity_names(num_classes)
+
+    # ── Popup: confusion matrix (with activity names) ─────────
+    fig_cm, axes_cm = plt.subplots(1, 2, figsize=(22, 10))
+
+    ConfusionMatrixDisplay(confusion_matrix=cm,
+                           display_labels=act_names).plot(
+        ax=axes_cm[0], cmap="Blues", values_format="d"
+    )
+    axes_cm[0].set_title("Absolute Counts", fontsize=14, fontweight="bold")
+    axes_cm[0].set_xticklabels(axes_cm[0].get_xticklabels(), rotation=30, ha="right")
+    for text in axes_cm[0].texts:
+        text.set_fontsize(8)
+
+    ConfusionMatrixDisplay(confusion_matrix=cm_norm,
+                           display_labels=act_names).plot(
+        ax=axes_cm[1], cmap="Blues", values_format=".1%"
+    )
+    axes_cm[1].set_title("Recall per True Label (% of samples)", fontsize=14, fontweight="bold")
+    axes_cm[1].set_xticklabels(axes_cm[1].get_xticklabels(), rotation=30, ha="right")
+    for text in axes_cm[1].texts:
+        text.set_fontsize(8)
+
+    fig_cm.suptitle(
+        f"Confusion Matrix — {config_id}\n"
+        f"Eval: {EVAL_TAG}  |  Acc: {acc:.4f}  |  F1(macro): {f1m:.4f}",
+        fontsize=13, fontweight="bold", y=0.98,
+    )
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    fig_cm.savefig(cm_path, dpi=150, bbox_inches="tight")
+    print(f"  ✓ Confusion matrix saved → {cm_path}")
+
+    # ── Popup: per-activity metrics table ─────────────────────
+    from sklearn.metrics import precision_recall_fscore_support
+    prec, rec, f1_per, support = precision_recall_fscore_support(
+        y_true_np, y_pred, labels=np.arange(num_classes)
+    )
+
+    rows = [[name, f"{p:.4f}", f"{r:.4f}", f"{f:.4f}"]
+            for name, p, r, f in zip(act_names, prec, rec, f1_per)]
+    rows.append(["macro avg",
+                 f"{prec.mean():.4f}",
+                 f"{rec.mean():.4f}",
+                 f"{f1_per.mean():.4f}"])
+
+    col_labels = ["Activity", "Precision", "Recall", "F1"]
+    fig_f1, ax_f1 = plt.subplots(figsize=(7, 0.5 + 0.45 * len(rows)))
+    ax_f1.axis("off")
+    tbl = ax_f1.table(
+        cellText=rows,
+        colLabels=col_labels,
+        loc="center",
+        cellLoc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(11)
+    tbl.scale(1, 1.6)
+    # bold header and macro avg row
+    for col in range(len(col_labels)):
+        tbl[0, col].set_facecolor("#4472C4")
+        tbl[0, col].set_text_props(color="white", fontweight="bold")
+        tbl[len(rows), col].set_facecolor("#D9E1F2")
+        tbl[len(rows), col].set_text_props(fontweight="bold")
+    ax_f1.set_title(
+        f"Per-activity Precision / Recall / F1\n"
+        f"{config_id}  |  {EVAL_TAG}  |  macro F1={f1m:.4f}",
+        fontsize=11, fontweight="bold", pad=12,
+    )
+    plt.tight_layout()
+
+    print("\n  → Showing popups (close windows to finish)...")
+    plt.show()
+
     print("\n" + "=" * 70)
     print("Evaluation complete.")
     print(f"  Model    : {model_path.name}")
     print(f"  Eval tag : {EVAL_TAG}")
     print(f"  Accuracy : {acc:.4f}  |  F1(macro): {f1m:.4f}")
     print("=" * 70)
+
+
+# ═══════════════════════════════════════════════════════════════
+# HELPERS
+# ═══════════════════════════════════════════════════════════════
+
+def _get_activity_names(num_classes: int) -> List[str]:
+    """
+    Try to read activity names from window_source_map.jsonl in the first
+    TREMOR_VARIANTS folder.  Falls back to numeric strings if not found.
+    """
+    try:
+        map_path = (base_data_dir / TREMOR_VARIANTS[0] / "window_source_map.jsonl")
+        seen: Dict[int, str] = {}
+        with open(map_path) as f:
+            for line in f:
+                d = json.loads(line)
+                lbl  = int(d["activity_label"])
+                name = d["activity_name"]
+                if lbl not in seen:
+                    seen[lbl] = name
+                if len(seen) >= num_classes + 5:  # early exit
+                    break
+        if seen:
+            # Re-index: labels are 1-based in the file, 0-based in embeddings
+            sorted_labels = sorted(seen.keys())
+            return [seen[l] for l in sorted_labels[:num_classes]]
+    except Exception:
+        pass
+    return [str(i) for i in range(num_classes)]
 
 
 # ═══════════════════════════════════════════════════════════════

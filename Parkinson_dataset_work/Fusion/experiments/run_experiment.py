@@ -54,11 +54,31 @@ from torch.utils.data import DataLoader, Dataset
 #   Gyro_LL, Gyro_LR, Gyro_UL, Gyro_UR, Gyro_head
 #   Mag_LL, Mag_LR, Mag_UL, Mag_UR, Mag_head
 # The fs value must match the folder names listed in TREMOR_VARIANTS below.
+# SENSORS_CONFIG: Dict[str, int] = {
+#     "Acc_LL":   50,
+#     "Acc_LR":   50,
+#     "Mag_LL":   50,
+#     "Mag_LR":   50,
+#     "Mag_head": 50,
+# }
+
+
+#using all sensors with fs 50 for all
 SENSORS_CONFIG: Dict[str, int] = {
     "Acc_LL":   50,
     "Acc_LR":   50,
+    "Acc_UL":   50,
+    "Acc_UR":   50,
+    "Acc_head": 50,
+    "Gyro_LL":   50,
+    "Gyro_LR":   50,
+    "Gyro_UL":   50,
+    "Gyro_UR":   50,
+    "Gyro_head": 50,
     "Mag_LL":   50,
     "Mag_LR":   50,
+    "Mag_UL":   50,
+    "Mag_UR":   50,
     "Mag_head": 50,
 }
 
@@ -76,16 +96,18 @@ SENSORS_CONFIG: Dict[str, int] = {
 #     ["s2_w2_fs50_tremor_parkinson", "s2_w2_fs50_tremor_clean",
 #      "s2_w2_fs50_tremor_mild_mod", "s2_w2_fs50_tremor_mod_severe"]
 TREMOR_VARIANTS: List[str] = [
-    #"s2_w2_fs50_tremor_clean",
-    "s2_w2_fs50_tremor_mild_mod",
-    "s2_w2_fs50_tremor_mod_severe",
+    "s4_w4_fs50_tremor_clean",
+    # "s4_w4_fs50_tremor_mild_mod",
+    # "s4_w4_fs50_tremor_mod_severe",
+    # "s2_w2_fs50_tremor_mild_mod",
+    # "s2_w2_fs50_tremor_mod_severe",
 ]
 
 # Short tag that labels this data configuration.
 # Used in output folder names and the best-tracker filename so that
 # results from different data setups stay separated.
 # Examples: "clean", "mixed", "pd_only", "pd_mixed"
-EXPERIMENT_TAG: str = "mild_severe"
+EXPERIMENT_TAG: str = "clean_s4_w4"
 
 SEED: int = 41
 

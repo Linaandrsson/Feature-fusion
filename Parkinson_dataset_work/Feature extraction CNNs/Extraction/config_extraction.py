@@ -10,16 +10,16 @@ feature_extraction_root = script_dir.parent
 project_root = feature_extraction_root.parent
 
 # ========================= CHANGE THESE ===========================
-dataset_config = "s2_w2"
+dataset_config = "s4_w4"
 model_variant = "fs50_tremor_mixed_all3"
-seq_len = 100
+seq_len = 200
 
 # Extract embeddings for all four tremor variants.
 variant_names = [
-    "s2_w2_fs50_tremor_clean",
-    "s2_w2_fs50_tremor_mild_mod",
-    "s2_w2_fs50_tremor_mod_severe",
-    "s2_w2_fs50_tremor_parkinson",
+    # "s2_w2_fs50_tremor_clean",
+    # "s2_w2_fs50_tremor_mild_mod",
+    # "s2_w2_fs50_tremor_mod_severe",
+    "s4_w4_fs50_tremor_parkinson",
 ]
 
 # Subject-based split definition from training config.

@@ -606,17 +606,18 @@ def precompute_tremor_cache_with_parkinson_model(
            RMS_gyro = k_g(RMS_acc) * RMS_acc
            Freq = FREQ_TREMOR[subject_id]
     
-    2. "interval": Per-window sampling from severity ranges
-       - Samples tremor parameters independently for each window
-       - RMS sampled from severity intervals (SCORE_RMS_RANGE)
-       - Activity-dependent scaling applied after score/RMS sampling (BETA_ACTIVITY)
-       - Frequency sampled randomly from range (FREQ_RANGE_HZ)
-       - More variability, suited for augmentation studies
+     2. "interval": Per-window sampling from severity ranges
+         - Samples tremor parameters independently for each window
+         - RMS sampled from severity intervals (SCORE_RMS_RANGE)
+         - No activity/location scaling applied here in cache precompute
+            (these are applied later in dataset-generation logic)
+         - Frequency sampled randomly from range (FREQ_RANGE_HZ)
+         - More variability, suited for augmentation studies
        
        The tremor RMS for each window is sampled as:
            score = random choice based on augment_mode
            RMS_acc_base ~ Uniform(SCORE_RMS_RANGE[score]) * (1 + variation)
-           RMS_acc = RMS_acc_base * beta[activity]
+           RMS_acc = RMS_acc_base
            RMS_gyro = k_g(RMS_acc) * RMS_acc
            Freq ~ Uniform(FREQ_RANGE_HZ)
     
@@ -691,9 +692,9 @@ def precompute_tremor_cache_with_parkinson_model(
         print(f"Model: Sample parameters per window from severity ranges")
         print(f"       score ~ choice based on augment_mode='{augment_mode}'")
         print(f"       RMS_acc_base ~ Uniform(SCORE_RMS_RANGE[score]) * (1 + variation)")
-        print(f"       RMS_acc = RMS_acc_base * beta[activity]")
+        print(f"       RMS_acc = RMS_acc_base")
         print(f"       RMS_gyro = k_g(RMS_acc) * RMS_acc")
-        print(f"       Frequency ~ Uniform({pk_config.FREQ_RANGE_HZ[0]}-{pk_config.FREQ_RANGE_HZ[1]} Hz)")
+        print(f"       Frequency by mode: {pk_config.FREQ_RANGE_BY_MODE}")
     
     print(f"Parameters:")
     if sampling_method == "subject":
@@ -703,8 +704,9 @@ def precompute_tremor_cache_with_parkinson_model(
     else:  # interval
         print(f"  - Augment mode: {augment_mode}")
         print(f"  - RMS ranges: {pk_config.SCORE_RMS_RANGE}")
-        print(f"  - Activity beta map: {pk_config.BETA_ACTIVITY}")
-        print(f"  - Frequency range: {pk_config.FREQ_RANGE_HZ} Hz")
+        print(f"  - Activity/location scaling: applied downstream in dataset generator")
+        print(f"  - Frequency ranges by mode: {pk_config.FREQ_RANGE_BY_MODE}")
+        print(f"  - Severe tail ratio: {getattr(pk_config, 'SEVERE_TAIL_RATIO', 'n/a')}")
     print(f"  - Jitter: {'enabled' if use_jitter else 'disabled'} (std={jitter_std:.3f})")
     print(f"  - Scenario seed: {scenario_seed}")
     
@@ -714,6 +716,16 @@ def precompute_tremor_cache_with_parkinson_model(
     # Create RNG for jitter and interval sampling
     jitter_rng = np.random.default_rng(scenario_seed + 99999)
     interval_rng = np.random.default_rng(scenario_seed + 88888) if sampling_method == "interval" else None
+
+    # Exact mixed-tail allocation: pre-select which windows are severe.
+    severe_window_idx = set()
+    if sampling_method == "interval" and augment_mode == "mixed_tail":
+        n_windows = len(window_specs)
+        severe_ratio = float(getattr(pk_config, "SEVERE_TAIL_RATIO", 0.144))
+        n_severe = int(round(max(0.0, min(1.0, severe_ratio)) * n_windows))
+        if n_severe > 0:
+            severe_window_idx = set(interval_rng.choice(n_windows, size=n_severe, replace=False).tolist())
+        print(f"  - Mixed tail split: n_total={n_windows}, n_mild={n_windows - n_severe}, n_severe={n_severe}")
     
     # Group windows by body part
     body_parts_to_process = {}
@@ -775,7 +787,9 @@ def precompute_tremor_cache_with_parkinson_model(
         else:  # sampling_method == "interval"
             # Interval-based method: sample parameters per window
             # For ankle, use arm's parameters with scaling; otherwise sample new params
-            activity_beta = float(pk_config.BETA_ACTIVITY.get(label, 1.0))
+            # In interval mode, cache precompute keeps base tremor parameters only.
+            # Activity/location scaling is applied once downstream during dataset generation.
+            activity_beta = 1.0
 
             if body_part == 'ankle':
                 # Ankle is derived from arm tremor for the same window
@@ -786,7 +800,6 @@ def precompute_tremor_cache_with_parkinson_model(
                 freq_hz = arm_meta['freq_hz']
                 arm_acc_target = arm_meta['acc_target_rms']
                 arm_gyro_target = arm_meta['gyro_target_rms']
-                activity_beta = float(arm_meta.get('activity_beta', activity_beta))
                 
                 # Apply ankle scaling
                 ankle_ratio = pk_config.ANKLE_RATIO_BY_SCORE[score]
@@ -794,14 +807,15 @@ def precompute_tremor_cache_with_parkinson_model(
                 gyro_target = arm_gyro_target * ankle_ratio
             else:
                 # For arm and chest, sample new parameters
+                mode_for_window = augment_mode
+                if augment_mode == "mixed_tail":
+                    mode_for_window = "mod_severe" if w_idx in severe_window_idx else "mild_mod"
                 score, acc_target, freq_hz = pk_config.sample_tremor_params(
-                    augment_mode=augment_mode,
+                    augment_mode=mode_for_window,
                     rng=interval_rng
                 )
 
-                # Apply activity-dependent modulation after score/RMS sampling
-                # to preserve the requested "draw score first, then scale by activity" flow.
-                acc_target = max(0.0, float(acc_target) * activity_beta)
+                acc_target = max(0.0, float(acc_target))
                 
                 # Calculate gyroscope RMS from accelerometer RMS
                 k_g = pk_config.choose_kg_from_rms_acc(acc_target)
@@ -881,10 +895,13 @@ def precompute_tremor_cache_with_parkinson_model(
             else:
                 meta['severity'] = 'severe'
             meta['augment_mode'] = augment_mode
+            if sampling_method == "interval" and augment_mode == "mixed_tail":
+                meta['augment_mode_sampled'] = "mod_severe" if w_idx in severe_window_idx else "mild_mod"
             meta['score'] = score
             meta['sampled_score'] = sampled_score
             meta['scaled_score'] = scaled_score
             meta['activity_beta'] = activity_beta
+            meta['activity_beta_applied_in_cache'] = False
         
         tremor_cache[(w_idx, body_part)] = {
             'acc_noise': acc_noise.astype(np.float32),

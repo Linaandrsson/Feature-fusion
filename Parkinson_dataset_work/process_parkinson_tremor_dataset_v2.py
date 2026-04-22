@@ -44,9 +44,9 @@ import tremor_parkinson_config as pk_config
 # CONFIG - Basic parameters
 # ============================================================
 ORIGINAL_FS = 50        # original sampling rate in Parkinson data (Hz)
-FS = 40                 # target sampling rate (Hz)
-WINDOW_SEC = 2.0        # window length in seconds
-STRIDE_SEC = 2.0        # stride in seconds
+FS = 50                 # target sampling rate (Hz)
+WINDOW_SEC = 4.0        # window length in seconds
+STRIDE_SEC = 4.0        # stride in seconds
 AUG_SIZE = 2            # number of augmented copies per window
 NOISE_LEVEL = 0.01      # augmentation noise level (NOT tremor)
 
@@ -78,6 +78,10 @@ TREMOR_MAX_ON_SEC = 8.0
 # Jitter: adds window-to-window variability
 USE_TREMOR_JITTER = True
 TREMOR_JITTER_STD = 0.15  # 15% variability
+
+# Generate an additional mixed tremor dataset where mod_severe is a tail
+# component controlled by pk_config.SEVERE_TAIL_RATIO.
+GENERATE_MIXED_TAIL_VARIANT = True
 
 # ============================================================
 # CONFIG - Diagnostics
@@ -240,6 +244,14 @@ def get_sensor_type(sensor_name: str) -> str:
     elif "Mag" in sensor_name:
         return "mag"
     return "unknown"
+
+
+def _get_window_tremor_scales(sensor_name: str, tremor_score: int, activity_name: str) -> Tuple[float, float, float]:
+    """Return (location_scale, activity_scale, total_scale) for one window."""
+    location_code = extract_location_code(sensor_name)
+    location_scale = float(pk_config.get_location_scale_for_score(int(tremor_score), location_code))
+    activity_scale = float(pk_config.get_activity_beta_for_score(int(tremor_score), activity_name))
+    return location_scale, activity_scale, location_scale * activity_scale
 
 
 # ============================================================
@@ -460,11 +472,11 @@ def generate_variant(
     is_pd_mode: bool = False,
 ) -> None:
     """
-    Generate dataset variant (clean, mild_mod, mod_severe, or parkinson).
+    Generate dataset variant (clean, mild_mod, mod_severe, mixed_tail, or parkinson).
     
     Args:
         variant_name: Output directory name
-        augment_mode: "clean", "mild_mod", "mod_severe", or "parkinson"
+        augment_mode: "clean", "mild_mod", "mod_severe", "mixed_tail", or "parkinson"
         window_specs: List of window specification dicts
         subject_data: Dict mapping (source, patient_folder) -> data array
         is_pd_mode: True if generating parkinson variant (PD only, no tremor simulation)
@@ -569,6 +581,7 @@ def generate_variant(
         "clean": {0},
         "mild_mod": {1, 2},
         "mod_severe": {3, 4},
+        "mixed_tail": {1, 2, 3, 4},
         "parkinson": {PD_TREMOR_SENTINEL_SCORE},
     }
     allowed_scores = allowed_tremor_scores.get(augment_mode, None)
@@ -676,8 +689,21 @@ def generate_variant(
                         # Other sensors: apply tremor
                         signal_cache_entry = tremor_cache.get((global_w_idx, signal_body_part))
                         if signal_cache_entry is not None:
+                            meta = signal_cache_entry.get("meta", {})
+                            tremor_acc_rms_base = float(meta.get("acc_target_rms", 0.0))
+                            tremor_score_val = int(
+                                meta.get(
+                                    "sampled_score",
+                                    meta.get("score", pk_config.get_tremor_score(tremor_acc_rms_base))
+                                )
+                            )
+                            _, _, total_scale = _get_window_tremor_scales(
+                                sensor_name=sensor_name,
+                                tremor_score=tremor_score_val,
+                                activity_name=ws.get("activity_name", ""),
+                            )
                             if sensor_name in pk_config.ROTATION_BASED_MAG_SENSORS:
-                                gyro_tremor = signal_cache_entry["gyro_noise"]
+                                gyro_tremor = signal_cache_entry["gyro_noise"] * total_scale
                                 win_raw = apply_tremor_rotation_to_magnetometer(
                                     mag_signal=win_raw,
                                     gyro_tremor=gyro_tremor,
@@ -685,7 +711,7 @@ def generate_variant(
                                 )
                             elif sensor_type in ["acc", "gyro", "mag"]:
                                 noise_key = f"{sensor_type}_noise"
-                                win_raw += signal_cache_entry[noise_key]
+                                win_raw += signal_cache_entry[noise_key] * total_scale
 
                     # Apply augmentation
                     if apply_awgn_aug:
@@ -721,22 +747,21 @@ def generate_variant(
                             meta = signal_cache_entry["meta"]
                             tremor_freq = meta.get("freq_hz", 0.0)
                             tremor_acc_rms_base = meta.get("acc_target_rms", 0.0)
-                            tremor_gyro_rms_base = meta.get("gyro_target_rms", 0.0)
                             tremor_score = int(
                                 meta.get(
                                     "sampled_score",
                                     meta.get("score", pk_config.get_tremor_score(tremor_acc_rms_base))
                                 )
                             )
-                            
-                            # Apply location-based tremor scaling
-                            location_code = extract_location_code(sensor_name)
-                            location_ratio = pk_config.LOCATION_TREMOR_RATIO_BY_SCORE.get(
-                                tremor_score, {}
-                            ).get(location_code, 1.0)
-                            
-                            # Scale accelerometer tremor
-                            tremor_acc_rms = tremor_acc_rms_base * location_ratio
+
+                            # Apply location and activity scaling to align labels with
+                            # the actual injected tremor amplitude for this window.
+                            _, _, total_scale = _get_window_tremor_scales(
+                                sensor_name=sensor_name,
+                                tremor_score=tremor_score,
+                                activity_name=ws.get("activity_name", ""),
+                            )
+                            tremor_acc_rms = tremor_acc_rms_base * total_scale
                             
                             # Recalculate gyro RMS from scaled accelerometer RMS
                             # Using the same relationship: gyro_rms = k_g(acc_rms) * acc_rms
@@ -886,6 +911,10 @@ def main():
                 (f"{base_name}_mild_mod", "mild_mod", window_specs["ct"], False),
                 (f"{base_name}_mod_severe", "mod_severe", window_specs["ct"], False),
             ])
+            if GENERATE_MIXED_TAIL_VARIANT:
+                variants_to_generate.append(
+                    (f"{base_name}_mixed_tail", "mixed_tail", window_specs["ct"], False)
+                )
         else:
             variants_to_generate.append(
                 (f"{base_name}_clean", "clean", window_specs["ct"], False)

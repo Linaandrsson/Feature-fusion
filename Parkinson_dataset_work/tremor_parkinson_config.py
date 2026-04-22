@@ -91,51 +91,31 @@ ANKLE_RATIO_BY_SCORE = {
 }
 
 # ============================================================
-# Location-Based Tremor Scaling (for Parkinson IMU dataset)
+# Location-Based Tremor Scaling (PD-derived)
 # ============================================================
-# Parkinson tremor varies by body location:
-# - Lower Left arm (LL): Reference location (100% = no scaling)
-# - Upper arms (UR, UL): Scaled relative to accelerometer baseline
-# - Head: Scaled relative to accelerometer baseline
+# Body-location / sensor-placement scaling derived from PD data analysis.
 #
-# Ratios define tremor at each location as a fraction of accelerometer baseline
-# (which is sampled from clean severity range for that window).
-#
-# Applied to both accelerometer and gyroscope tremor targets.
+# Reference baseline is Lower Right (1.0). Other locations are represented
+# relative to that reference per severity score.
 
-LOCATION_TREMOR_RATIO_BY_SCORE = {
-    # Score 1 (mild): 0.05-0.10 m/s²
-    1: {
-        "LL": 1.00,   # Lower Left arm (reference, no scaling)
-        "LR": 0.00,   # Lower Right arm (same as LL)
-        "UR": 0.00,   # Upper Right arm (reduced compared to lower arm)
-        "UL": 0.70,   # Upper Left arm (reduced compared to lower arm)
-        #"head": 0.30, # Head (much reduced tremor)
-    },
-    # Score 2 (mild-moderate): 0.25-0.5 m/s²
-    2: {
-        "LL": 1.00,
-        "LR": 0.70,
-        "UR": 0.70,
-        "UL": 0.70*0.70,
-        #"head": 0.30,
-    },
-    # Score 3 (moderate-severe): 1.1-2.0 m/s²
-    3: {
-        "LL": 1.00,
-        "LR": 1.00,
-        "UR": 0.70,
-        "UL": 0.70,
-        #"head": 0.30,
-    },
-    # Score 4 (severe): 4.65-5.10 m/s²
-    4: {
-        "LL": 1.00,
-        "LR": 1.00,
-        "UR": 0.70,
-        "UL": 0.70,
-        #"head": 0.30,
-    },
+LOCATION_SCALE_BY_SCORE = {
+    1: {"Upper Right": 0.732, "Lower Right": 1.000, "Upper Left": 0.601, "Lower Left": 0.659, "Head": 0.438},
+    2: {"Upper Right": 0.975, "Lower Right": 1.000, "Upper Left": 0.812, "Lower Left": 0.749, "Head": 0.762},
+    3: {"Upper Right": 0.779, "Lower Right": 1.000, "Upper Left": 0.641, "Lower Left": 0.697, "Head": 0.710},
+    4: {"Upper Right": 0.714, "Lower Right": 1.000, "Upper Left": 0.478, "Lower Left": 0.653, "Head": 0.393},
+}
+
+# Accept both analysis names and generator short codes in one place.
+_LOCATION_NAME_ALIASES = {
+    "upper right": "Upper Right",
+    "ur": "Upper Right",
+    "lower right": "Lower Right",
+    "lr": "Lower Right",
+    "upper left": "Upper Left",
+    "ul": "Upper Left",
+    "lower left": "Lower Left",
+    "ll": "Lower Left",
+    "head": "Head",
 }
 
 # ============================================================
@@ -146,19 +126,77 @@ import numpy as np
 import random
 
 # Score -> RMS_acc interval (m/s^2)
-SCORE_RMS_RANGE = {
+SCORE_RMS_RANGE_old = {
     1: (0.05, 0.10),
     2: (0.25, 0.5),
     3: (1.1, 2.0),
     4: (4.65, 5.10),
 }
 
+#range 1: utgangspunkt range
+SCORE_RMS_RANGE_1 = {
+    1: (0.16, 0.28),
+    2: (0.28, 0.48),
+    3: (0.48, 0.72),
+    4: (0.72, 1.00),
+}
+
+SCORE_RMS_RANGE_2 = {
+    1: (0.16, 0.28),
+    2: (0.28, 0.48),
+    3: (0.48, 0.72),
+    4: (0.72, 1.00),
+}
+
+SCORE_RMS_RANGE = SCORE_RMS_RANGE_1  # Choose which range to use for sampling tremor severity
+
+# Activity-dependent scaling by tremor score (interval sampling pipeline).
+# Baseline-like activities use 1.0, while rest/key can be attenuated.
+BETA_ACTIVITY_BY_SCORE = {
+    1: {"calibration": 0.85, 
+        "key": 1.00, 
+        "cardigan": 0.85, 
+        "toast": 0.95},
+    2: {"calibration": 0.85, 
+        "key": 1.00, 
+        "cardigan": 0.85, 
+        "toast": 0.95},
+    3: {"calibration": 0.78, 
+        "key": 1.00, 
+        "cardigan": 0.90, 
+        "toast": 0.96},
+    4: {"calibration": 0.72, 
+        "key": 1.00, 
+        "cardigan": 0.75, 
+        "toast": 0.75},
+}
 # Default augmentation mode (can be overridden per-window)
 DEFAULT_AUGMENT_MODE = "mod_severe"   # Options: "clean", "mild_mod", "mod_severe"
 
 # Optional: per-window variability (keeps realism)
 SUBJECT_VARIATION_STD = 0.10   # 10% multiplicative variation
-FREQ_RANGE_HZ = (3.5, 7.0)     # Parkinson tremor frequency range
+FREQ_RANGE_HZ_old = (3.5, 7.0) 
+
+FREQ_RANGE_BY_MODE_old = {
+    "mild_mod": (2.5, 5.0),
+    "mod_severe": (7.0, 10.0),
+}
+
+# Mode-specific tremor frequency ranges (Hz)
+FREQ_RANGE_BY_MODE = {
+    "mild_mod": (3.0, 7.0),
+    "mod_severe": (3.0, 7.0),
+}
+
+# Fraction of severe windows when sampling a mixed tremor distribution.
+# Example: 0.144 -> ~14.4% mod_severe, ~85.6% mild_mod.
+SEVERE_TAIL_RATIO = 0.144
+
+# Backward-compatible global range used by legacy diagnostics/plots.
+FREQ_RANGE_HZ = (
+    min(v[0] for v in FREQ_RANGE_BY_MODE.values()),
+    max(v[1] for v in FREQ_RANGE_BY_MODE.values()),
+)
 
 # ============================================================
 # Tremor Sampling Method Selection
@@ -176,6 +214,54 @@ FREQ_RANGE_HZ = (3.5, 7.0)     # Parkinson tremor frequency range
 DEFAULT_SAMPLING_METHOD = "interval"  # Options: "subject", "interval"
 
 
+def get_freq_range_for_mode(augment_mode: str) -> tuple[float, float]:
+    """Return the configured frequency range for a tremor augmentation mode."""
+    if augment_mode in FREQ_RANGE_BY_MODE:
+        lo, hi = FREQ_RANGE_BY_MODE[augment_mode]
+        return float(lo), float(hi)
+    lo, hi = FREQ_RANGE_HZ
+    return float(lo), float(hi)
+
+
+def get_activity_beta_for_score(score: int, activity_name: str | None) -> float:
+    """Return activity-dependent amplitude scaling for a given severity score.
+
+    Falls back to 1.0 when score/activity is unknown.
+    """
+    if activity_name is None:
+        return 1.0
+    try:
+        score_i = int(score)
+    except Exception:
+        return 1.0
+    key = str(activity_name).strip().lower()
+    by_activity = BETA_ACTIVITY_BY_SCORE.get(score_i, {})
+    return float(by_activity.get(key, 1.0))
+
+
+def get_location_scale_for_score(score: int, location_name: str | None) -> float:
+    """Return location-dependent amplitude scaling for a severity score.
+
+    Accepts both full location names (e.g., "Upper Right") and short codes
+    used in sensor names (e.g., "UR", "LL", "head"). Falls back to 1.0 when
+    score/location is unknown.
+    """
+    if location_name is None:
+        return 1.0
+    try:
+        score_i = int(score)
+    except Exception:
+        return 1.0
+
+    key = str(location_name).strip().lower()
+    canonical = _LOCATION_NAME_ALIASES.get(key)
+    if canonical is None:
+        return 1.0
+
+    by_location = LOCATION_SCALE_BY_SCORE.get(score_i, {})
+    return float(by_location.get(canonical, 1.0))
+
+
 def sample_tremor_params(augment_mode: str = None, rng: np.random.Generator = None) -> tuple[int, float, float]:
     """
     Sample tremor parameters for one window.
@@ -188,6 +274,7 @@ def sample_tremor_params(augment_mode: str = None, rng: np.random.Generator = No
             - "clean": No tremor (score=0, rms=0, freq=0)
             - "mild_mod": Sample from score 1-2 (mild to mild-moderate)
             - "mod_severe": Sample from score 3-4 (moderate-severe to severe)
+            - "mixed_tail": Sample mild_mod vs mod_severe using SEVERE_TAIL_RATIO
             - None: Use DEFAULT_AUGMENT_MODE
         rng: Random number generator for reproducibility (optional)
         
@@ -205,36 +292,41 @@ def sample_tremor_params(augment_mode: str = None, rng: np.random.Generator = No
     """
     if augment_mode is None:
         augment_mode = DEFAULT_AUGMENT_MODE
-    
+
     if rng is None:
         rng = np.random.default_rng()
-    
+
     if augment_mode == "clean":
         return 0, 0.0, 0.0
-    
-    elif augment_mode == "mild_mod":
-        score = rng.choice([1, 2])
+
+    if augment_mode == "mixed_tail":
+        p_severe = float(max(0.0, min(1.0, SEVERE_TAIL_RATIO)))
+        augment_mode = "mod_severe" if float(rng.random()) < p_severe else "mild_mod"
+
+    if augment_mode == "mild_mod":
+        score = int(rng.choice([1, 2]))
         rms_min, rms_max = SCORE_RMS_RANGE[score]
         rms = float(rng.uniform(rms_min, rms_max))
         rms *= float(rng.normal(1.0, SUBJECT_VARIATION_STD))
-        # Clamp to valid range for this score to prevent falling into gaps
-        rms = float(np.clip(rms, rms_min, rms_max))
-        freq = float(rng.uniform(*FREQ_RANGE_HZ))
+        rms = float(np.clip(rms, min(rms_min, rms_max), max(rms_min, rms_max)))
+        freq_lo, freq_hi = get_freq_range_for_mode("mild_mod")
+        freq = float(rng.uniform(freq_lo, freq_hi))
         return score, rms, freq
-    
-    elif augment_mode == "mod_severe":
-        score = rng.choice([3, 4])
+
+    if augment_mode == "mod_severe":
+        score = int(rng.choice([3, 4]))
         rms_min, rms_max = SCORE_RMS_RANGE[score]
         rms = float(rng.uniform(rms_min, rms_max))
         rms *= float(rng.normal(1.0, SUBJECT_VARIATION_STD))
-        # Clamp to valid range for this score to prevent falling into gaps
-        rms = float(np.clip(rms, rms_min, rms_max))
-        freq = float(rng.uniform(*FREQ_RANGE_HZ))
+        rms = float(np.clip(rms, min(rms_min, rms_max), max(rms_min, rms_max)))
+        freq_lo, freq_hi = get_freq_range_for_mode("mod_severe")
+        freq = float(rng.uniform(freq_lo, freq_hi))
         return score, rms, freq
-    
-    else:
-        raise ValueError(f"Unknown augment_mode: {augment_mode}. "
-                        f"Must be 'clean', 'mild_mod', or 'mod_severe'")
+
+    raise ValueError(
+        f"Unknown augment_mode: {augment_mode}. "
+        f"Must be 'clean', 'mild_mod', 'mod_severe', or 'mixed_tail'"
+    )
 
 
 def apply_sampled_tremor_to_window(
@@ -410,7 +502,7 @@ JITTER_STD = 0.15  # 15% standard deviation
 # Gyroscope RMS Calculation from Accelerometer RMS
 # ============================================================
 
-def choose_kg_from_rms_acc(rms_acc: float) -> float:
+def choose_kg_from_rms_acc_old(rms_acc: float) -> float:
     """
     Severity-dependent mapping from accelerometer tremor RMS (m/s^2) to k_g (deg/s per m/s^2).
 
@@ -450,6 +542,11 @@ def choose_kg_from_rms_acc(rms_acc: float) -> float:
 
     # Above modeled max -> keep most severe bin
     return 13.0
+
+def choose_kg_from_rms_acc(rms_acc: float, rng: np.random.Generator | None = None) -> float:
+    if rng is None:
+        rng = np.random.default_rng()
+    return float(rng.uniform(0.25, 0.40))
 
 
 def get_tremor_score(rms_acc: float) -> int:
