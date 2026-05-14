@@ -5,11 +5,10 @@ Test: Verify that precompute_tremor_cache_with_parkinson_model()
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
-import Tremor
-import tremor_parkinson_config as pk_config
+from tremor_simulation import Tremor
+import tremor_simulation.tremor_parkinson_config as pk_config
 
 def test_tremor_cache_has_correct_frequencies():
     """

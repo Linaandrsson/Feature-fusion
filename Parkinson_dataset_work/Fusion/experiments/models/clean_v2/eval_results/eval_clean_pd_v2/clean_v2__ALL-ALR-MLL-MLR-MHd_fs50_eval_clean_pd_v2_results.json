@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-04-20 10:48:14",
+  "eval_tag": "eval_clean_pd_v2",
+  "data_variants": [
+    "s2_w2_fs50_tremor_parkinson"
+  ],
+  "model_file": "clean_v2__ALL-ALR-MLL-MLR-MHd_fs50_best.pth",
+  "config_id": "clean_v2__ALL-ALR-MLL-MLR-MHd_fs50",
+  "sensors": [
+    "Acc_LL",
+    "Acc_LR",
+    "Mag_LL",
+    "Mag_LR",
+    "Mag_head"
+  ],
+  "sensors_fs": {
+    "Acc_LL": 50,
+    "Acc_LR": 50,
+    "Mag_LL": 50,
+    "Mag_LR": 50,
+    "Mag_head": 50
+  },
+  "n_samples": 8884,
+  "trained_test_acc": 0.89162,
+  "trained_test_f1": 0.899624,
+  "trained_seed": 41,
+  "variant_subjects_filter": {
+    "s2_w2_fs50_tremor_clean": [
+      1,
+      14,
+      19
+    ]
+  },
+  "eval_accuracy": 0.815624,
+  "eval_f1_macro": 0.810313,
+  "eval_f1_weighted": 0.815692
+}

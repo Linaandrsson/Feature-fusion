@@ -20,32 +20,74 @@ import argparse
 import sys
 
 # Import configuration
-from config_extraction import (
-    parent_dir, variant_dir, models_dir, seq_len, batch_size,
-    get_model_path, get_data_path, output_dir, SENSORS
-)
+# If called from extract_all_corrupt_variants.py, env vars override config_extraction.py
+import os as _os
+import importlib as _importlib
+
+_cfg = _importlib.import_module("config_extraction")
+
+_variant_name    = _os.environ.get("EXTRACTION_VARIANT_NAME")
+_dataset_config  = _os.environ.get("EXTRACTION_DATASET_CONFIG")
+_model_variant   = _os.environ.get("EXTRACTION_MODEL_VARIANT")
+_output_subdir   = _os.environ.get("EXTRACTION_OUTPUT_SUBDIR")  # overrides output folder name
+
+if _variant_name:
+    _workspace_root = Path(_cfg.__file__).parents[2]
+    _data_base      = _workspace_root / "data" / "Tremor_datagenerator_files"
+    variant_dir     = _data_base / _variant_name
+    parent_dir      = variant_dir / "splits"
+    _dc             = _dataset_config or _cfg.dataset_config
+    _mv             = _model_variant  or _cfg.model_variant
+    models_dir      = _workspace_root / "Feature extraction CNNs" / "Models" / _dc / _mv
+    output_dir      = variant_dir / (_output_subdir or _cfg.output_dir.name)
+
+    def get_model_path(sensor_name):
+        return models_dir / f"feature_extractor_{sensor_name}.pth"
+
+    def get_data_path(sensor_name):
+        return variant_dir / f"{sensor_name}.txt"
+else:
+    parent_dir    = _cfg.parent_dir
+    variant_dir   = _cfg.variant_dir
+    models_dir    = _cfg.models_dir
+    output_dir    = _cfg.output_dir
+    get_model_path = _cfg.get_model_path
+    get_data_path  = _cfg.get_data_path
+
+seq_len    = _cfg.seq_len
+batch_size = _cfg.batch_size
+SENSORS    = _cfg.SENSORS
 
 
 class IMUCNN(nn.Module):
-    """CNN model for IMU feature extraction (must match training architecture)."""
-    def __init__(self, num_classes: int, seq_len: int, num_channels: int):
+    """CNN model for IMU feature extraction.
+
+    Architecture is inferred from the checkpoint via build_model_from_ckpt().
+    ch1 / ch2 are the out-channels of the 1st and 2nd Conv1d blocks.
+    has_bn_embed adds a BatchNorm after fc_embed (used by the ECG model).
+    """
+    def __init__(self, num_classes: int, seq_len: int, num_channels: int,
+                 ch1: int = 128, ch2: int = 128, has_bn_embed: bool = False):
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
+            nn.Conv1d(num_channels, ch1, kernel_size=5, padding=2),
+            nn.BatchNorm1d(ch1),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.2),
 
-            nn.Conv1d(128, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
+            nn.Conv1d(ch1, ch2, kernel_size=5, padding=2),
+            nn.BatchNorm1d(ch2),
             nn.ReLU(),
             nn.MaxPool1d(2),
             nn.Dropout(0.3),
         )
-        self.flattened_dim = (seq_len // 4) * 128
+        self.flattened_dim = (seq_len // 4) * ch2
         self.flatten = nn.Flatten()
         self.fc_embed = nn.Linear(self.flattened_dim, 128)
+        self.has_bn_embed = has_bn_embed
+        if has_bn_embed:
+            self.bn_embed = nn.BatchNorm1d(128)
         self.drop_cls = nn.Dropout(0.5)
         self.fc_cls = nn.Linear(128, num_classes)
 
@@ -53,12 +95,24 @@ class IMUCNN(nn.Module):
         x = self.features(x)
         x = self.flatten(x)
         z = self.fc_embed(x)
+        if self.has_bn_embed:
+            z = self.bn_embed(z)
         return z
 
     def forward(self, x):
         z = self.extract_features(x)
         z = self.drop_cls(z)
         return self.fc_cls(z)
+
+
+def build_model_from_ckpt(ckpt: dict, num_channels: int, seq_len: int, num_classes: int) -> "IMUCNN":
+    """Instantiate IMUCNN with the architecture inferred from a checkpoint's state_dict."""
+    sd = ckpt["model_state_dict"]
+    ch1 = sd["features.0.weight"].shape[0]
+    ch2 = sd["features.5.weight"].shape[0]
+    has_bn_embed = "bn_embed.weight" in sd
+    return IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels,
+                  ch1=ch1, ch2=ch2, has_bn_embed=has_bn_embed)
 
 
 def load_data(sensor_name: str, num_channels: int):
@@ -185,8 +239,8 @@ def main(sensor_name: str):
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
     
-    model = IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels).to(device)
     ckpt = torch.load(model_path, map_location=device)
+    model = build_model_from_ckpt(ckpt, num_channels=num_channels, seq_len=seq_len, num_classes=num_classes).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     print(f"  Loaded from: {model_path}")
     

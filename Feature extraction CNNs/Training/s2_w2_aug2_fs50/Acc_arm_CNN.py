@@ -376,7 +376,7 @@ labels_display = list(range(1, 13))
 
 # Create output directory for confusion matrices
 current_folder = Path(__file__).parent.name
-cm_output_dir = Path("/Users/linaandersson/Desktop/master/Confusion_Matrixes") / current_folder
+cm_output_dir = script_dir / "Confusion_Matrixes" / current_folder
 cm_output_dir.mkdir(parents=True, exist_ok=True)
 
 # Confusion Matrix (Counts)

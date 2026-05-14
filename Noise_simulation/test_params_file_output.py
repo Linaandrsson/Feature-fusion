@@ -4,9 +4,8 @@ Test: Verify that parameter file documentation is correct
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(__file__))
 
-import Tremor
+from tremor_simulation import Tremor
 
 # Test write_tremor_parkinson_params_file
 output_path = "/tmp/test_tremor_params.txt"

@@ -1,0 +1,994 @@
+#!/usr/bin/env python3
+"""
+Tremor Characterization Analysis
+=================================
+
+Analyzes real IMU data from PD and CT subjects to characterize actual tremor
+properties, then compares findings against the current simulation configuration
+in tremor_parkinson_config.py.
+
+Purpose: Use findings to guide improvement of the tremor simulation used in
+         the HAR robustness pipeline.
+
+Input:   Data_parkinson/{CT,PD}*/*.xls  (5 sensor sheets per file)
+Output:  tremor_characterization/
+           report.txt          - human-readable statistics + comparison
+           data.json           - machine-readable results (for config updates)
+           plots/              - frequency, RMS, k_g, per-location figures
+
+Key measurements per 2-sec window:
+  - Dominant tremor frequency   (FFT peak in 2-12 Hz band)
+  - Accelerometer RMS           (bandpass-filtered, 3-axis L2)
+  - Gyroscope RMS               (bandpass-filtered, 3-axis L2)
+  - k_g ratio                   (gyro_rms / acc_rms)
+  - Per-axis RMS                (to check axis dominance)
+
+Groups compared:
+  - PD vs CT (noise floor reference)
+  - Per sensor location: Upper Right, Lower Right, Upper Left, Lower Left, Head
+  - Per activity: calibration (closest to rest), key, cardigan, toast
+"""
+
+import sys
+import json
+import warnings
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from scipy.signal import butter, filtfilt
+import matplotlib
+matplotlib.use("Agg")          # headless backend, no display needed
+import matplotlib.pyplot as plt
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+SCRIPT_DIR   = Path(__file__).parent.resolve()
+DATA_DIR     = SCRIPT_DIR.parent / "Data" / "Data_parkinson"
+OUTPUT_DIR   = SCRIPT_DIR / "tremor_characterization"
+PLOTS_DIR    = OUTPUT_DIR / "plots"
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# Section 1 – Analysis Configuration
+# ---------------------------------------------------------------------------
+
+FS_ORIGINAL   = 50          # Hz – nominal sampling rate of raw data
+WINDOW_SEC    = 2.0         # seconds – window size for analysis
+TREMOR_LO_HZ  = 2.0         # Hz – tremor band lower edge
+TREMOR_HI_HZ  = 12.0        # Hz – tremor band upper edge
+BUTTERWORTH_ORDER = 4       # bandpass filter order
+
+# Minimum signal length to attempt analysis (samples)
+MIN_SIGNAL_SAMPLES = int(WINDOW_SEC * FS_ORIGINAL * 1)   # at least 1 window
+
+# Minimum window-level acc RMS to count as "tremor-present"
+# Set very low so we capture even mild tremor; we separate by group afterwards.
+TREMOR_RMS_THRESHOLD = 0.005   # m/s²
+
+# Sensor sheets in each .xls file
+SENSOR_SHEETS = ["Upper Right", "Lower Right", "Upper Left", "Lower Left", "Head"]
+
+# Column layout returned by _load_sheet() -> shape (T, 9)
+ACC_COLS  = slice(0, 3)   # Cal1-Cal3
+GYRO_COLS = slice(3, 6)   # Cal4-Cal6
+MAG_COLS  = slice(6, 9)   # Cal7-Cal9
+
+# Location → short code (used in plots / report)
+LOCATION_CODE = {
+    "Upper Right": "UR",
+    "Lower Right": "LR",
+    "Upper Left":  "UL",
+    "Lower Left":  "LL",
+    "Head":        "Hd",
+}
+
+# Activity names inferred from file stem (case-insensitive prefix match)
+ACTIVITY_MAP = {
+    "calibration": "calibration",
+    "calib":       "calibration",
+    "key":         "key",
+    "cardigan":    "cardigan",
+    "toast":       "toast",
+}
+
+# ---------------------------------------------------------------------------
+# Current simulation config values (from tremor_parkinson_config.py)
+# Used only for comparison at the end – not imported to keep script standalone.
+# ---------------------------------------------------------------------------
+SIM_SCORE_RMS_RANGE = {
+    1: (0.05, 0.10),   # mild
+    2: (0.25, 0.50),   # mild-moderate
+    3: (1.10, 2.00),   # moderate-severe
+    4: (4.65, 5.10),   # severe
+}
+SIM_FREQ_RANGE_HZ  = (3.5, 7.0)
+SIM_KG_BY_SEVERITY = {
+    "mild":             11,
+    "mild-moderate":    22,
+    "moderate-severe":  14,
+    "severe":           13,
+}
+SIM_ANKLE_RATIO_BY_SCORE = {1: 0.05, 2: 0.12, 3: 0.22, 4: 0.35}
+
+# "Arm" proxy locations in the PD dataset (upper + lower limb, both sides)
+ARM_LOCATIONS  = ["Upper Right", "Upper Left"]
+LOWER_LOCATIONS = ["Lower Right", "Lower Left"]
+HEAD_LOCATIONS  = ["Head"]
+
+
+# ===========================================================================
+# Section 2 – Data Loading
+# ===========================================================================
+
+def _normalize_name(name: str) -> str:
+    """Lowercase + strip."""
+    return name.strip().lower()
+
+
+def _infer_activity(stem: str) -> str | None:
+    """Infer activity name from file stem (case-insensitive)."""
+    s = stem.strip().lower()
+    for key, activity in ACTIVITY_MAP.items():
+        if s.startswith(key):
+            return activity
+    return None
+
+
+def _infer_group(folder_name: str) -> str | None:
+    """Return 'pd' or 'ct' from folder name."""
+    n = folder_name.upper()
+    if n.startswith("PD"):
+        return "pd"
+    if n.startswith("CT"):
+        return "ct"
+    return None
+
+
+def _load_sheet(file_path: Path, sheet_name: str) -> np.ndarray | None:
+    """
+    Load one sensor sheet from an XLS file.
+
+    Returns:
+        ndarray of shape (T, 9) with columns [Cal1..Cal9] as float32,
+        or None if sheet is missing / unreadable.
+    """
+    try:
+        xls = pd.ExcelFile(file_path)
+        norm_map = {_normalize_name(s): s for s in xls.sheet_names}
+        key = _normalize_name(sheet_name)
+        if key not in norm_map:
+            return None
+        df = pd.read_excel(xls, sheet_name=norm_map[key])
+        if df.shape[1] < 10:
+            return None
+        # Columns 1-9 = Cal1..Cal9 (skip column 0 = Time)
+        numeric = df.iloc[:, 1:10].apply(pd.to_numeric, errors="coerce").dropna()
+        if len(numeric) < MIN_SIGNAL_SAMPLES:
+            return None
+        return numeric.to_numpy(dtype=np.float64)
+    except Exception:
+        return None
+
+
+def load_all_trials(data_dir: Path) -> list[dict]:
+    """
+    Walk data_dir and load every valid .xls trial.
+
+    Returns list of dicts, one per (subject, trial, sensor_sheet):
+      {
+        "subject": str,        e.g. "PD002"
+        "group":   str,        "pd" or "ct"
+        "activity": str,       "calibration" / "key" / "cardigan" / "toast"
+        "location": str,       e.g. "Upper Right"
+        "data":    ndarray,    shape (T, 9)  – raw Cal1..Cal9
+      }
+    """
+    records = []
+    patient_dirs = sorted(
+        d for d in data_dir.iterdir()
+        if d.is_dir() and not d.name.startswith("._")
+    )
+
+    for patient_dir in patient_dirs:
+        group = _infer_group(patient_dir.name)
+        if group is None:
+            continue
+
+        trial_files = sorted(
+            p for p in patient_dir.iterdir()
+            if p.is_file()
+            and p.suffix.lower() in {".xls", ".xlsx"}
+            and not p.name.startswith("._")
+        )
+
+        for trial_file in trial_files:
+            activity = _infer_activity(trial_file.stem)
+            if activity is None:
+                continue
+
+            for sheet in SENSOR_SHEETS:
+                data = _load_sheet(trial_file, sheet)
+                if data is None:
+                    continue
+                records.append({
+                    "subject":  patient_dir.name,
+                    "group":    group,
+                    "activity": activity,
+                    "location": sheet,
+                    "data":     data,
+                })
+
+    print(f"Loaded {len(records)} (subject, trial, location) records from {len(patient_dirs)} subject folders.")
+    return records
+
+
+# ===========================================================================
+# Section 3 – Signal Processing
+# ===========================================================================
+
+def _bandpass_filter(signal: np.ndarray, lo: float, hi: float, fs: float, order: int = 4) -> np.ndarray:
+    """
+    Apply zero-phase Butterworth bandpass filter.
+
+    Args:
+        signal: (T,) or (T, C) array
+        lo, hi: bandpass edges in Hz
+        fs:     sampling rate in Hz
+    Returns:
+        filtered array, same shape as input
+    """
+    nyq = 0.5 * fs
+    low  = lo / nyq
+    high = hi / nyq
+    low  = max(low,  1e-4)
+    high = min(high, 1.0 - 1e-4)
+    b, a = butter(order, [low, high], btype="band")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if signal.ndim == 1:
+            return filtfilt(b, a, signal)
+        else:
+            return np.column_stack([filtfilt(b, a, signal[:, c]) for c in range(signal.shape[1])])
+
+
+def _rms_3d(arr: np.ndarray) -> float:
+    """
+    3-axis L2 RMS: sqrt(mean(x² + y² + z²))  where x,y,z are time series.
+    Equivalent to mean Euclidean magnitude of the vector.
+    """
+    return float(np.sqrt(np.mean(np.sum(arr ** 2, axis=1))))
+
+
+def _rms_per_axis(arr: np.ndarray) -> np.ndarray:
+    """Return per-axis RMS, shape (3,)."""
+    return np.sqrt(np.mean(arr ** 2, axis=0))
+
+
+def _dominant_frequency(signal: np.ndarray, fs: float, lo: float, hi: float) -> float:
+    """
+    Find dominant frequency in bandpass range using FFT.
+    Uses the mean of absolute values across axes if signal is 2D.
+    """
+    if signal.ndim > 1:
+        sig1d = np.sqrt(np.sum(signal ** 2, axis=1))   # Euclidean magnitude
+    else:
+        sig1d = signal
+
+    n    = len(sig1d)
+    freq = np.fft.rfftfreq(n, d=1.0 / fs)
+    fft  = np.abs(np.fft.rfft(sig1d))
+
+    mask = (freq >= lo) & (freq <= hi)
+    if not np.any(mask):
+        return float("nan")
+
+    peak_idx = np.argmax(fft[mask])
+    return float(freq[mask][peak_idx])
+
+
+# ===========================================================================
+# Section 4 – Per-window Analysis
+# ===========================================================================
+
+def analyze_windows(records: list[dict]) -> list[dict]:
+    """
+    Slide a 2-sec window over each trial signal and compute tremor features.
+
+    Returns list of window-level result dicts:
+      {
+        "subject", "group", "activity", "location",
+        "acc_rms",    float  – bandpass-filtered 3D RMS (m/s²)
+        "gyro_rms",   float  – bandpass-filtered 3D RMS (raw units)
+        "kg_ratio",   float  – gyro_rms / acc_rms  (or nan if acc_rms ~ 0)
+        "dom_freq",   float  – dominant frequency in 2-12 Hz (Hz)
+        "acc_rms_axes",  ndarray (3,) – per-axis acc RMS
+        "gyro_rms_axes", ndarray (3,) – per-axis gyro RMS
+      }
+    """
+    win_samples = int(round(WINDOW_SEC * FS_ORIGINAL))
+    results = []
+
+    for rec in records:
+        data  = rec["data"]        # (T, 9)
+        acc   = data[:, ACC_COLS]  # (T, 3)
+        gyro  = data[:, GYRO_COLS] # (T, 3)
+
+        if len(acc) < win_samples:
+            continue
+
+        # Bandpass-filter entire signal first (avoids edge effects per window)
+        acc_bp  = _bandpass_filter(acc,  TREMOR_LO_HZ, TREMOR_HI_HZ, FS_ORIGINAL, BUTTERWORTH_ORDER)
+        gyro_bp = _bandpass_filter(gyro, TREMOR_LO_HZ, TREMOR_HI_HZ, FS_ORIGINAL, BUTTERWORTH_ORDER)
+
+        # Slide window with stride = window (non-overlapping)
+        n_windows = len(acc_bp) // win_samples
+        for w in range(n_windows):
+            s = w * win_samples
+            e = s + win_samples
+            acc_win  = acc_bp[s:e]
+            gyro_win = gyro_bp[s:e]
+
+            acc_rms   = _rms_3d(acc_win)
+            gyro_rms  = _rms_3d(gyro_win)
+            kg_ratio  = gyro_rms / acc_rms if acc_rms > 1e-9 else float("nan")
+            dom_freq  = _dominant_frequency(acc_win, FS_ORIGINAL, TREMOR_LO_HZ, TREMOR_HI_HZ)
+
+            results.append({
+                "subject":       rec["subject"],
+                "group":         rec["group"],
+                "activity":      rec["activity"],
+                "location":      rec["location"],
+                "acc_rms":       acc_rms,
+                "gyro_rms":      gyro_rms,
+                "kg_ratio":      kg_ratio,
+                "dom_freq":      dom_freq,
+                "acc_rms_axes":  _rms_per_axis(acc_win),
+                "gyro_rms_axes": _rms_per_axis(gyro_win),
+            })
+
+    print(f"Analyzed {len(results)} windows.")
+    return results
+
+
+# ===========================================================================
+# Section 5 – Statistical Aggregation
+# ===========================================================================
+
+def _stats(values: np.ndarray) -> dict:
+    """Return a dict of summary statistics for a 1-D numeric array."""
+    v = values[np.isfinite(values)]
+    if len(v) == 0:
+        return {"n": 0, "mean": float("nan"), "std": float("nan"),
+                "p5": float("nan"), "p25": float("nan"),
+                "median": float("nan"), "p75": float("nan"), "p95": float("nan")}
+    return {
+        "n":      int(len(v)),
+        "mean":   float(np.mean(v)),
+        "std":    float(np.std(v)),
+        "p5":     float(np.percentile(v, 5)),
+        "p25":    float(np.percentile(v, 25)),
+        "median": float(np.median(v)),
+        "p75":    float(np.percentile(v, 75)),
+        "p95":    float(np.percentile(v, 95)),
+    }
+
+
+def aggregate_results(windows: list[dict]) -> dict:
+    """
+    Build nested statistics dict:
+      results["by_group"]["pd"/"ct"][metric]  → _stats
+      results["by_location"]["Upper Right"][metric] → _stats  (PD only)
+      results["by_activity"]["calibration"][metric] → _stats  (PD only)
+      results["by_location_activity"][loc][activity][metric] → _stats  (PD only)
+      results["upper_vs_lower"]   → arm/lower limb ratio stats (PD, calibration)
+      results["per_subject"]      → list of per-subject median values
+    """
+    import collections
+
+    def extract(subset, metric):
+        return np.array([w[metric] for w in subset], dtype=float)
+
+    pd_all = [w for w in windows if w["group"] == "pd"]
+    ct_all = [w for w in windows if w["group"] == "ct"]
+
+    # ── by_group ──────────────────────────────────────────────────────────
+    by_group = {}
+    for group, subset in [("pd", pd_all), ("ct", ct_all)]:
+        by_group[group] = {
+            metric: _stats(extract(subset, metric))
+            for metric in ("acc_rms", "gyro_rms", "kg_ratio", "dom_freq")
+        }
+
+    # ── by_location (PD only) ────────────────────────────────────────────
+    by_location = {}
+    for loc in SENSOR_SHEETS:
+        subset = [w for w in pd_all if w["location"] == loc]
+        if not subset:
+            continue
+        by_location[loc] = {
+            metric: _stats(extract(subset, metric))
+            for metric in ("acc_rms", "gyro_rms", "kg_ratio", "dom_freq")
+        }
+
+    # ── by_activity (PD only) ────────────────────────────────────────────
+    activities = sorted({w["activity"] for w in pd_all})
+    by_activity = {}
+    for act in activities:
+        subset = [w for w in pd_all if w["activity"] == act]
+        by_activity[act] = {
+            metric: _stats(extract(subset, metric))
+            for metric in ("acc_rms", "gyro_rms", "kg_ratio", "dom_freq")
+        }
+
+    # ── by_location_activity (PD only) ───────────────────────────────────
+    by_loc_act = {}
+    for loc in SENSOR_SHEETS:
+        by_loc_act[loc] = {}
+        for act in activities:
+            subset = [w for w in pd_all if w["location"] == loc and w["activity"] == act]
+            if not subset:
+                continue
+            by_loc_act[loc][act] = {
+                metric: _stats(extract(subset, metric))
+                for metric in ("acc_rms", "gyro_rms", "kg_ratio", "dom_freq")
+            }
+
+    # ── upper vs lower limb ratio (PD, arm locations) ────────────────────
+    upper_rms = extract([w for w in pd_all if w["location"] in ARM_LOCATIONS],   "acc_rms")
+    lower_rms = extract([w for w in pd_all if w["location"] in LOWER_LOCATIONS], "acc_rms")
+    upper_gyro = extract([w for w in pd_all if w["location"] in ARM_LOCATIONS],   "gyro_rms")
+    lower_gyro = extract([w for w in pd_all if w["location"] in LOWER_LOCATIONS], "gyro_rms")
+
+    upper_vs_lower = {
+        "mean_acc_upper":  float(np.nanmean(upper_rms)),
+        "mean_acc_lower":  float(np.nanmean(lower_rms)),
+        "lower_upper_acc_ratio": float(np.nanmean(lower_rms) / np.nanmean(upper_rms))
+                                 if np.nanmean(upper_rms) > 0 else float("nan"),
+        "mean_gyro_upper": float(np.nanmean(upper_gyro)),
+        "mean_gyro_lower": float(np.nanmean(lower_gyro)),
+        "lower_upper_gyro_ratio": float(np.nanmean(lower_gyro) / np.nanmean(upper_gyro))
+                                  if np.nanmean(upper_gyro) > 0 else float("nan"),
+    }
+
+    # ── per-subject median (PD, arm locations) ────────────────────────────
+    subjects = sorted({w["subject"] for w in pd_all})
+    per_subject = []
+    for subj in subjects:
+        sw = [w for w in pd_all if w["subject"] == subj
+              and w["location"] in ARM_LOCATIONS]
+        if not sw:
+            continue
+        per_subject.append({
+            "subject":     subj,
+            "n_windows":   len(sw),
+            "acc_rms_med": float(np.nanmedian([w["acc_rms"] for w in sw])),
+            "gyro_rms_med": float(np.nanmedian([w["gyro_rms"] for w in sw])),
+            "kg_ratio_med": float(np.nanmedian([w["kg_ratio"] for w in sw])),
+            "dom_freq_med": float(np.nanmedian([w["dom_freq"] for w in sw])),
+        })
+
+    return {
+        "by_group":           by_group,
+        "by_location":        by_location,
+        "by_activity":        by_activity,
+        "by_location_activity": by_loc_act,
+        "upper_vs_lower":     upper_vs_lower,
+        "per_subject":        per_subject,
+    }
+
+
+# ===========================================================================
+# Section 6 – Comparison with Simulation Config
+# ===========================================================================
+
+def build_comparison(agg: dict) -> dict:
+    """
+    Compare measured PD statistics against current simulation config.
+    Returns dict of findings and recommendations.
+    """
+    pd_arm = {
+        "acc_rms":  np.array([s["acc_rms_med"] for s in agg["per_subject"]]),
+        "gyro_rms": np.array([s["gyro_rms_med"] for s in agg["per_subject"]]),
+        "kg_ratio": np.array([s["kg_ratio_med"] for s in agg["per_subject"]]),
+        "dom_freq": np.array([s["dom_freq_med"] for s in agg["per_subject"]]),
+    }
+
+    measured_acc_p5   = float(np.nanpercentile(pd_arm["acc_rms"], 5))
+    measured_acc_p95  = float(np.nanpercentile(pd_arm["acc_rms"], 95))
+    measured_freq_p5  = float(np.nanpercentile(pd_arm["dom_freq"], 5))
+    measured_freq_p95 = float(np.nanpercentile(pd_arm["dom_freq"], 95))
+    measured_kg_med   = float(np.nanmedian(pd_arm["kg_ratio"]))
+    measured_kg_p5    = float(np.nanpercentile(pd_arm["kg_ratio"], 5))
+    measured_kg_p95   = float(np.nanpercentile(pd_arm["kg_ratio"], 95))
+
+    # Measured acc range covers which sim severity score?
+    sim_flat = {score: rng for score, rng in SIM_SCORE_RMS_RANGE.items()}
+    sim_all_min = min(v[0] for v in sim_flat.values())
+    sim_all_max = max(v[1] for v in sim_flat.values())
+
+    uvl = agg["upper_vs_lower"]
+
+    return {
+        "acc_rms": {
+            "measured_p5_p95": (measured_acc_p5, measured_acc_p95),
+            "sim_full_range":  (sim_all_min, sim_all_max),
+            "coverage_ok":     measured_acc_p5 >= sim_all_min * 0.5
+                               and measured_acc_p95 <= sim_all_max * 2.0,
+        },
+        "frequency": {
+            "measured_p5_p95": (measured_freq_p5, measured_freq_p95),
+            "sim_range":       SIM_FREQ_RANGE_HZ,
+            "coverage_ok":     (measured_freq_p5 >= SIM_FREQ_RANGE_HZ[0] * 0.8
+                                and measured_freq_p95 <= SIM_FREQ_RANGE_HZ[1] * 1.2),
+        },
+        "kg_ratio": {
+            "measured_median": measured_kg_med,
+            "measured_p5_p95": (measured_kg_p5, measured_kg_p95),
+            "sim_values":      SIM_KG_BY_SEVERITY,
+        },
+        "upper_vs_lower": {
+            "measured_ratio_acc":  uvl["lower_upper_acc_ratio"],
+            "measured_ratio_gyro": uvl["lower_upper_gyro_ratio"],
+            "sim_ankle_ratios":    SIM_ANKLE_RATIO_BY_SCORE,
+            "note": ("The PD dataset has Upper/Lower ARM locations, not ankle. "
+                     "These ratios approximate forearm vs. upper-arm, not arm vs. ankle."),
+        },
+    }
+
+
+# ===========================================================================
+# Section 7 – Visualization
+# ===========================================================================
+
+COLORS = {"pd": "#E05252", "ct": "#5278E0"}
+
+def _hist_ax(ax, pd_vals, ct_vals, xlabel, title, bins=30):
+    pd_clean = pd_vals[np.isfinite(pd_vals)]
+    ct_clean = ct_vals[np.isfinite(ct_vals)]
+    all_vals = np.concatenate([pd_clean, ct_clean])
+    if len(all_vals) == 0:
+        return
+    lo, hi = np.percentile(all_vals, 1), np.percentile(all_vals, 99)
+    ax.hist(ct_clean, bins=bins, range=(lo, hi), alpha=0.55, color=COLORS["ct"],
+            label=f"CT (n={len(ct_clean)})", density=True)
+    ax.hist(pd_clean, bins=bins, range=(lo, hi), alpha=0.55, color=COLORS["pd"],
+            label=f"PD (n={len(pd_clean)})", density=True)
+    ax.axvline(np.median(pd_clean), color=COLORS["pd"], linestyle="--", linewidth=1.5, label="PD median")
+    ax.axvline(np.median(ct_clean), color=COLORS["ct"], linestyle="--", linewidth=1.5, label="CT median")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Density")
+    ax.set_title(title)
+    ax.legend(fontsize=7)
+
+
+def plot_group_distributions(windows: list[dict]):
+    """Figure 1: PD vs CT distributions for all key metrics."""
+    pd_w = [w for w in windows if w["group"] == "pd"]
+    ct_w = [w for w in windows if w["group"] == "ct"]
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    fig.suptitle("PD vs CT – Bandpass-filtered IMU Tremor Metrics\n(all locations, all activities)", fontsize=12)
+
+    _hist_ax(axes[0, 0],
+             np.array([w["acc_rms"]  for w in pd_w]),
+             np.array([w["acc_rms"]  for w in ct_w]),
+             "Acc RMS (bandpass 2-12 Hz)", "Accelerometer RMS")
+
+    _hist_ax(axes[0, 1],
+             np.array([w["gyro_rms"] for w in pd_w]),
+             np.array([w["gyro_rms"] for w in ct_w]),
+             "Gyro RMS (bandpass 2-12 Hz)", "Gyroscope RMS")
+
+    _hist_ax(axes[1, 0],
+             np.array([w["dom_freq"] for w in pd_w]),
+             np.array([w["dom_freq"] for w in ct_w]),
+             "Dominant frequency (Hz)", "Dominant Tremor Frequency")
+
+    _hist_ax(axes[1, 1],
+             np.array([w["kg_ratio"] for w in pd_w]),
+             np.array([w["kg_ratio"] for w in ct_w]),
+             "k_g  =  Gyro RMS / Acc RMS", "k_g Ratio (gyro/acc)")
+
+    plt.tight_layout()
+    out = PLOTS_DIR / "01_pd_vs_ct_distributions.png"
+    plt.savefig(out, dpi=120)
+    plt.close()
+    print(f"  Saved: {out.name}")
+
+
+def plot_per_location(windows: list[dict]):
+    """Figure 2: Acc RMS and dominant frequency per sensor location, PD only."""
+    pd_w = [w for w in windows if w["group"] == "pd"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    fig.suptitle("PD – Per Sensor Location (arm locations = proxies for upper/lower limb)", fontsize=11)
+
+    for ax, metric, xlabel in [
+        (axes[0], "acc_rms",  "Acc RMS (bandpass, m/s²)"),
+        (axes[1], "dom_freq", "Dominant Frequency (Hz)"),
+    ]:
+        data_by_loc = []
+        labels = []
+        for loc in SENSOR_SHEETS:
+            vals = np.array([w[metric] for w in pd_w if w["location"] == loc])
+            vals = vals[np.isfinite(vals)]
+            if len(vals) == 0:
+                continue
+            data_by_loc.append(vals)
+            labels.append(LOCATION_CODE[loc])
+
+        ax.boxplot(data_by_loc, labels=labels, notch=False, patch_artist=True,
+                   boxprops=dict(facecolor="#E08080", alpha=0.6),
+                   medianprops=dict(color="black", linewidth=2))
+        ax.set_xlabel("Sensor Location")
+        ax.set_ylabel(xlabel)
+        ax.set_title(metric.replace("_", " ").title())
+        ax.grid(axis="y", linestyle="--", alpha=0.4)
+
+    plt.tight_layout()
+    out = PLOTS_DIR / "02_per_location.png"
+    plt.savefig(out, dpi=120)
+    plt.close()
+    print(f"  Saved: {out.name}")
+
+
+def plot_per_activity(windows: list[dict]):
+    """Figure 3: Acc RMS and dominant frequency per activity, PD only."""
+    pd_w = [w for w in windows if w["group"] == "pd"]
+    activities = sorted({w["activity"] for w in pd_w})
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+    fig.suptitle("PD – Per Activity (resting calibration vs. active tasks)", fontsize=11)
+
+    for ax, metric, xlabel in [
+        (axes[0], "acc_rms",  "Acc RMS (bandpass, m/s²)"),
+        (axes[1], "dom_freq", "Dominant Frequency (Hz)"),
+    ]:
+        data_by_act = []
+        labels = []
+        for act in activities:
+            vals = np.array([w[metric] for w in pd_w if w["activity"] == act])
+            vals = vals[np.isfinite(vals)]
+            if len(vals) == 0:
+                continue
+            data_by_act.append(vals)
+            labels.append(act)
+
+        ax.boxplot(data_by_act, labels=labels, notch=False, patch_artist=True,
+                   boxprops=dict(facecolor="#80B4E0", alpha=0.6),
+                   medianprops=dict(color="black", linewidth=2))
+        ax.set_xlabel("Activity")
+        ax.set_ylabel(xlabel)
+        ax.set_title(metric.replace("_", " ").title())
+        ax.grid(axis="y", linestyle="--", alpha=0.4)
+
+    plt.tight_layout()
+    out = PLOTS_DIR / "03_per_activity.png"
+    plt.savefig(out, dpi=120)
+    plt.close()
+    print(f"  Saved: {out.name}")
+
+
+def plot_per_subject(agg: dict):
+    """Figure 4: Per-subject median acc RMS and freq (PD subjects, arm locations)."""
+    subjects = agg["per_subject"]
+    if not subjects:
+        return
+
+    names    = [s["subject"]     for s in subjects]
+    acc_vals = [s["acc_rms_med"] for s in subjects]
+    freq_vals= [s["dom_freq_med"]for s in subjects]
+    kg_vals  = [s["kg_ratio_med"]for s in subjects]
+
+    x = np.arange(len(names))
+    fig, axes = plt.subplots(3, 1, figsize=(max(10, len(names)*0.7), 10))
+    fig.suptitle("PD Subjects – Median Tremor Metrics (arm locations, all activities)", fontsize=11)
+
+    for ax, vals, ylabel, color in [
+        (axes[0], acc_vals,  "Acc RMS (m/s²)",       "#E05252"),
+        (axes[1], freq_vals, "Dominant Freq (Hz)",   "#52A0E0"),
+        (axes[2], kg_vals,   "k_g = Gyro/Acc RMS",   "#60C060"),
+    ]:
+        bars = ax.bar(x, vals, color=color, alpha=0.75)
+        ax.set_xticks(x)
+        ax.set_xticklabels(names, rotation=45, ha="right", fontsize=8)
+        ax.set_ylabel(ylabel)
+        ax.grid(axis="y", linestyle="--", alpha=0.4)
+        for bar, v in zip(bars, vals):
+            if np.isfinite(v):
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                        f"{v:.2f}", ha="center", va="bottom", fontsize=6.5)
+
+    # Overlay simulation frequency range on freq plot
+    axes[1].axhline(SIM_FREQ_RANGE_HZ[0], color="orange", linestyle="--", linewidth=1.2,
+                    label=f"Sim freq lo ({SIM_FREQ_RANGE_HZ[0]} Hz)")
+    axes[1].axhline(SIM_FREQ_RANGE_HZ[1], color="orange", linestyle="-",  linewidth=1.2,
+                    label=f"Sim freq hi ({SIM_FREQ_RANGE_HZ[1]} Hz)")
+    axes[1].legend(fontsize=7)
+
+    plt.tight_layout()
+    out = PLOTS_DIR / "04_per_subject.png"
+    plt.savefig(out, dpi=120)
+    plt.close()
+    print(f"  Saved: {out.name}")
+
+
+def plot_kg_scatter(windows: list[dict]):
+    """Figure 5: k_g scatter plot – gyro RMS vs acc RMS, PD arm locations."""
+    pd_arm = [w for w in windows
+              if w["group"] == "pd" and w["location"] in ARM_LOCATIONS + LOWER_LOCATIONS]
+
+    acc_vals  = np.array([w["acc_rms"]  for w in pd_arm])
+    gyro_vals = np.array([w["gyro_rms"] for w in pd_arm])
+    mask = np.isfinite(acc_vals) & np.isfinite(gyro_vals) & (acc_vals > TREMOR_RMS_THRESHOLD)
+
+    if not np.any(mask):
+        return
+
+    acc_c  = acc_vals[mask]
+    gyro_c = gyro_vals[mask]
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ax.scatter(acc_c, gyro_c, s=10, alpha=0.3, color="#E05252", label="PD windows (arm/lower)")
+
+    # Overlay simulation k_g lines
+    line_colors = ["#1a9e4f", "#d4a017", "#1a7abf", "#7b1ab5"]
+    x_line = np.linspace(acc_c.min(), acc_c.max(), 200)
+    for (label, kg), color in zip(SIM_KG_BY_SEVERITY.items(), line_colors):
+        ax.plot(x_line, kg * x_line, "--", linewidth=1.5, color=color,
+                label=f"Sim k_g={kg} ({label})")
+
+    ax.set_xlabel("Acc RMS (bandpass, m/s²)")
+    ax.set_ylabel("Gyro RMS (bandpass)")
+    ax.set_title("k_g Scatter: Gyro RMS vs Acc RMS\n(PD arm/lower locations, arm locations)")
+    ax.legend(fontsize=7)
+    ax.grid(linestyle="--", alpha=0.3)
+    plt.tight_layout()
+    out = PLOTS_DIR / "05_kg_scatter.png"
+    plt.savefig(out, dpi=120)
+    plt.close()
+    print(f"  Saved: {out.name}")
+
+
+def plot_upper_lower_ratio(windows: list[dict]):
+    """Figure 6: Upper vs lower arm RMS distribution (PD, per subject)."""
+    pd_w = [w for w in windows if w["group"] == "pd"]
+
+    subjects = sorted({w["subject"] for w in pd_w})
+    upper_meds = []
+    lower_meds = []
+    subj_labels = []
+
+    for subj in subjects:
+        u = np.array([w["acc_rms"] for w in pd_w
+                      if w["subject"] == subj and w["location"] in ARM_LOCATIONS])
+        l = np.array([w["acc_rms"] for w in pd_w
+                      if w["subject"] == subj and w["location"] in LOWER_LOCATIONS])
+        if len(u) == 0 or len(l) == 0:
+            continue
+        upper_meds.append(np.nanmedian(u))
+        lower_meds.append(np.nanmedian(l))
+        subj_labels.append(subj)
+
+    if not subj_labels:
+        return
+
+    x = np.arange(len(subj_labels))
+    width = 0.4
+    fig, ax = plt.subplots(figsize=(max(9, len(subj_labels) * 0.8), 5))
+    ax.bar(x - width/2, upper_meds, width=width, alpha=0.75, color="#E05252", label="Upper arm (UR+UL)")
+    ax.bar(x + width/2, lower_meds, width=width, alpha=0.75, color="#E08030", label="Lower arm (LR+LL)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(subj_labels, rotation=45, ha="right", fontsize=8)
+    ax.set_ylabel("Acc RMS (bandpass, m/s²)")
+    ax.set_title("Upper vs Lower Arm Tremor RMS – Per PD Subject")
+    ax.legend()
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+    plt.tight_layout()
+    out = PLOTS_DIR / "06_upper_lower_ratio.png"
+    plt.savefig(out, dpi=120)
+    plt.close()
+    print(f"  Saved: {out.name}")
+
+
+# ===========================================================================
+# Section 8 – Report Generation
+# ===========================================================================
+
+def _fmt(v, decimals=3):
+    if isinstance(v, float) and not np.isfinite(v):
+        return "n/a"
+    return f"{v:.{decimals}f}"
+
+
+def _stats_row(s: dict) -> str:
+    return (f"  n={s['n']:5d}  mean={_fmt(s['mean'])}  median={_fmt(s['median'])}"
+            f"  std={_fmt(s['std'])}  [p5={_fmt(s['p5'])}, p95={_fmt(s['p95'])}]")
+
+
+def generate_report(agg: dict, comparison: dict) -> str:
+    lines = []
+
+    def h1(t): lines.append(f"\n{'='*70}\n  {t}\n{'='*70}")
+    def h2(t): lines.append(f"\n  --- {t} ---")
+    def ln(t=""): lines.append(t)
+
+    lines.append("TREMOR CHARACTERIZATION REPORT")
+    lines.append("Generated from real PD/CT IMU data (Data_parkinson/)")
+    lines.append(f"Window size: {WINDOW_SEC}s  |  Bandpass: {TREMOR_LO_HZ}–{TREMOR_HI_HZ} Hz  |  FS={FS_ORIGINAL} Hz\n")
+
+    # ── 1. Group overview ────────────────────────────────────────────────
+    h1("1. PD vs CT – Overall Tremor Statistics (all locations, all activities)")
+    for group in ["pd", "ct"]:
+        h2(group.upper())
+        g = agg["by_group"][group]
+        ln(f"  Acc RMS  (m/s²)      :{_stats_row(g['acc_rms'])}")
+        ln(f"  Gyro RMS             :{_stats_row(g['gyro_rms'])}")
+        ln(f"  k_g  (Gyro/Acc RMS)  :{_stats_row(g['kg_ratio'])}")
+        ln(f"  Dominant freq (Hz)   :{_stats_row(g['dom_freq'])}")
+
+    # ── 2. Per location (PD) ─────────────────────────────────────────────
+    h1("2. PD – Per Sensor Location")
+    for loc in SENSOR_SHEETS:
+        if loc not in agg["by_location"]:
+            continue
+        h2(f"{loc}  [{LOCATION_CODE[loc]}]")
+        g = agg["by_location"][loc]
+        ln(f"  Acc RMS  :{_stats_row(g['acc_rms'])}")
+        ln(f"  Gyro RMS :{_stats_row(g['gyro_rms'])}")
+        ln(f"  k_g      :{_stats_row(g['kg_ratio'])}")
+        ln(f"  Freq     :{_stats_row(g['dom_freq'])}")
+
+    # ── 3. Per activity (PD) ─────────────────────────────────────────────
+    h1("3. PD – Per Activity")
+    for act, g in agg["by_activity"].items():
+        h2(act)
+        ln(f"  Acc RMS  :{_stats_row(g['acc_rms'])}")
+        ln(f"  Gyro RMS :{_stats_row(g['gyro_rms'])}")
+        ln(f"  k_g      :{_stats_row(g['kg_ratio'])}")
+        ln(f"  Freq     :{_stats_row(g['dom_freq'])}")
+
+    # ── 4. Upper vs Lower limb ────────────────────────────────────────────
+    h1("4. Upper vs Lower Arm Ratio (PD, all activities)")
+    uvl = agg["upper_vs_lower"]
+    ln(f"  Upper arm acc RMS  (mean):  {_fmt(uvl['mean_acc_upper'])}")
+    ln(f"  Lower arm acc RMS  (mean):  {_fmt(uvl['mean_acc_lower'])}")
+    ln(f"  Lower/Upper acc ratio:      {_fmt(uvl['lower_upper_acc_ratio'])}")
+    ln(f"  Upper arm gyro RMS (mean):  {_fmt(uvl['mean_gyro_upper'])}")
+    ln(f"  Lower arm gyro RMS (mean):  {_fmt(uvl['mean_gyro_lower'])}")
+    ln(f"  Lower/Upper gyro ratio:     {_fmt(uvl['lower_upper_gyro_ratio'])}")
+    ln(f"  NOTE: {uvl.get('note','')}" if "note" in uvl else "")
+
+    # ── 5. Per subject ────────────────────────────────────────────────────
+    h1("5. Per PD Subject – Median Values (arm locations, all activities)")
+    ln(f"  {'Subject':<12} {'N_win':>6} {'acc_rms':>9} {'gyro_rms':>10} {'k_g':>7} {'dom_freq':>10}")
+    ln(f"  {'-'*12} {'-'*6} {'-'*9} {'-'*10} {'-'*7} {'-'*10}")
+    for s in sorted(agg["per_subject"], key=lambda x: x["subject"]):
+        ln(f"  {s['subject']:<12} {s['n_windows']:>6} "
+           f"{_fmt(s['acc_rms_med']):>9} {_fmt(s['gyro_rms_med']):>10} "
+           f"{_fmt(s['kg_ratio_med']):>7} {_fmt(s['dom_freq_med']):>10}")
+
+    # ── 6. Comparison with simulation config ─────────────────────────────
+    h1("6. Comparison: Measured Data vs. Current Simulation Config")
+
+    h2("6a. Accelerometer RMS")
+    c = comparison["acc_rms"]
+    ln(f"  Measured (p5–p95 across PD subjects): {_fmt(c['measured_p5_p95'][0])} – {_fmt(c['measured_p5_p95'][1])} m/s²")
+    ln(f"  Simulation full range (all scores):   {_fmt(c['sim_full_range'][0])} – {_fmt(c['sim_full_range'][1])} m/s²")
+    ln(f"  Sim scores:")
+    for score, (lo, hi) in SIM_SCORE_RMS_RANGE.items():
+        ln(f"    Score {score}: {lo} – {hi} m/s²")
+    ln(f"  Coverage OK: {c['coverage_ok']}")
+
+    h2("6b. Tremor Frequency")
+    c = comparison["frequency"]
+    ln(f"  Measured (p5–p95 across PD subjects): {_fmt(c['measured_p5_p95'][0])} – {_fmt(c['measured_p5_p95'][1])} Hz")
+    ln(f"  Simulation range:                     {c['sim_range'][0]} – {c['sim_range'][1]} Hz")
+    ln(f"  Coverage OK: {c['coverage_ok']}")
+
+    h2("6c. k_g Ratio (Gyro RMS / Acc RMS)")
+    c = comparison["kg_ratio"]
+    ln(f"  Measured median:  {_fmt(c['measured_median'])}")
+    ln(f"  Measured p5–p95:  {_fmt(c['measured_p5_p95'][0])} – {_fmt(c['measured_p5_p95'][1])}")
+    ln(f"  Simulation values by severity:")
+    for label, kg in c["sim_values"].items():
+        ln(f"    {label:<18}: k_g = {kg}")
+
+    h2("6d. Upper/Lower Arm Ratio (proxy for ankle/arm ratio)")
+    c = comparison["upper_vs_lower"]
+    ln(f"  Measured lower/upper acc  ratio: {_fmt(c['measured_ratio_acc'])}")
+    ln(f"  Measured lower/upper gyro ratio: {_fmt(c['measured_ratio_gyro'])}")
+    ln(f"  Simulation ankle/arm ratios (by score):")
+    for score, ratio in c["sim_ankle_ratios"].items():
+        ln(f"    Score {score}: {ratio}")
+    ln(f"  NOTE: {c['note']}")
+
+    h1("7. Key Findings Summary")
+    ln("  Review sections 1-6 and the plots/ folder.")
+    ln("  Key questions to answer:")
+    ln("    1. Does the measured PD acc RMS range match the simulation SCORE_RMS_RANGE?")
+    ln("    2. Is the measured dominant frequency within the simulation FREQ_RANGE_HZ?")
+    ln("    3. Does the measured k_g ratio match the simulation k_g values?")
+    ln("    4. Does the upper/lower arm ratio inform the ANKLE_RATIO_BY_SCORE values?")
+    ln("    5. How different is calibration (rest) vs. active tasks? (resting vs action tremor)")
+    ln("    6. What fraction of PD subjects show clearly elevated tremor vs. CT noise floor?")
+
+    return "\n".join(lines)
+
+
+# ===========================================================================
+# Section 9 – Main Entry Point
+# ===========================================================================
+
+def main():
+    print("=" * 60)
+    print("Tremor Characterization Analysis")
+    print("=" * 60)
+
+    # 1. Load data
+    print("\n[1/5] Loading trial data...")
+    records = load_all_trials(DATA_DIR)
+    if not records:
+        print("ERROR: No records loaded. Check DATA_DIR path.")
+        sys.exit(1)
+
+    n_pd = len({r["subject"] for r in records if r["group"] == "pd"})
+    n_ct = len({r["subject"] for r in records if r["group"] == "ct"})
+    print(f"  PD subjects: {n_pd}  |  CT subjects: {n_ct}")
+
+    # 2. Window-level analysis
+    print("\n[2/5] Computing per-window tremor features...")
+    windows = analyze_windows(records)
+    del records   # free memory
+
+    # 3. Aggregate statistics
+    print("\n[3/5] Aggregating statistics...")
+    agg = aggregate_results(windows)
+
+    # 4. Build comparison
+    print("\n[4/5] Comparing with simulation config...")
+    comparison = build_comparison(agg)
+
+    # 5. Visualize
+    print("\n[5/5] Generating plots...")
+    plot_group_distributions(windows)
+    plot_per_location(windows)
+    plot_per_activity(windows)
+    plot_per_subject(agg)
+    plot_kg_scatter(windows)
+    plot_upper_lower_ratio(windows)
+
+    # Generate report
+    report_text = generate_report(agg, comparison)
+    report_path = OUTPUT_DIR / "report.txt"
+    report_path.write_text(report_text, encoding="utf-8")
+    print(f"\n  Report saved: {report_path}")
+
+    # Save machine-readable JSON (strip ndarrays → lists)
+    def _jsonify(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, dict):
+            return {k: _jsonify(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_jsonify(v) for v in obj]
+        if isinstance(obj, float) and not np.isfinite(obj):
+            return None
+        return obj
+
+    json_out = {"aggregated": _jsonify(agg), "comparison": _jsonify(comparison)}
+    json_path = OUTPUT_DIR / "data.json"
+    json_path.write_text(json.dumps(json_out, indent=2), encoding="utf-8")
+    print(f"  Data JSON saved: {json_path}")
+
+    # Print report to console
+    print("\n" + report_text)
+    print(f"\nAll outputs in: {OUTPUT_DIR}")
+
+
+if __name__ == "__main__":
+    main()

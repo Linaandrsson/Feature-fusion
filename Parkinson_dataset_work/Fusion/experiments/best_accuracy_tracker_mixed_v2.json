@@ -1,0 +1,66 @@
+{
+  "mixed_v2__ALL-ALR-MLL-MLR-MHd_fs50": {
+    "best_test_accuracy": 0.896834,
+    "best_test_f1_macro": 0.906556,
+    "best_test_f1_weighted": 0.896789,
+    "seed": 41,
+    "timestamp": "2026-04-20 10:45:44",
+    "model_file": "mixed_v2__ALL-ALR-MLL-MLR-MHd_fs50_best.pth",
+    "sensors": [
+      "Acc_LL",
+      "Acc_LR",
+      "Mag_LL",
+      "Mag_LR",
+      "Mag_head"
+    ],
+    "sensors_fs": {
+      "Acc_LL": 50,
+      "Acc_LR": 50,
+      "Mag_LL": 50,
+      "Mag_LR": 50,
+      "Mag_head": 50
+    }
+  },
+  "mixed_v2__ALL-ALR-AUL-AUR-AHd-GLL-GLR-GUL-GUR-GHd-MLL-MLR-MUL-MUR-MHd_fs50": {
+    "best_test_accuracy": 0.907449,
+    "best_test_f1_macro": 0.915363,
+    "best_test_f1_weighted": 0.907397,
+    "seed": 41,
+    "timestamp": "2026-04-20 11:57:16",
+    "model_file": "mixed_v2__ALL-ALR-AUL-AUR-AHd-GLL-GLR-GUL-GUR-GHd-MLL-MLR-MUL-MUR-MHd_fs50_best.pth",
+    "sensors": [
+      "Acc_LL",
+      "Acc_LR",
+      "Acc_UL",
+      "Acc_UR",
+      "Acc_head",
+      "Gyro_LL",
+      "Gyro_LR",
+      "Gyro_UL",
+      "Gyro_UR",
+      "Gyro_head",
+      "Mag_LL",
+      "Mag_LR",
+      "Mag_UL",
+      "Mag_UR",
+      "Mag_head"
+    ],
+    "sensors_fs": {
+      "Acc_LL": 50,
+      "Acc_LR": 50,
+      "Acc_UL": 50,
+      "Acc_UR": 50,
+      "Acc_head": 50,
+      "Gyro_LL": 50,
+      "Gyro_LR": 50,
+      "Gyro_UL": 50,
+      "Gyro_UR": 50,
+      "Gyro_head": 50,
+      "Mag_LL": 50,
+      "Mag_LR": 50,
+      "Mag_UL": 50,
+      "Mag_UR": 50,
+      "Mag_head": 50
+    }
+  }
+}

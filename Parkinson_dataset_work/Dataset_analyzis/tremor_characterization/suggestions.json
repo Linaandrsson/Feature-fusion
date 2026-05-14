@@ -1,0 +1,60 @@
+{
+  "n_tremor_present_windows": 6053,
+  "note_kg_units": "k_g measured in raw XLS units. If gyro is in rad/s: multiply by 180/pi to get deg/s. Simulation uses deg/s, so measured k_g ~ X -> sim k_g = X*(180/pi).",
+  "suggested_SCORE_RMS_RANGE": {
+    "1": [
+      0.31,
+      0.638
+    ],
+    "2": [
+      0.638,
+      0.883
+    ],
+    "3": [
+      0.883,
+      1.323
+    ],
+    "4": [
+      1.323,
+      7.13
+    ]
+  },
+  "current_SCORE_RMS_RANGE": {
+    "1": [
+      0.16,
+      0.28
+    ],
+    "2": [
+      0.28,
+      0.48
+    ],
+    "3": [
+      0.48,
+      0.72
+    ],
+    "4": [
+      0.72,
+      1.0
+    ]
+  },
+  "suggested_FREQ_RANGE_HZ": [
+    2.0,
+    10.15
+  ],
+  "suggested_FREQ_RANGE_HZ_source": "arm locations (Upper Left/Right), tremor-present PD windows",
+  "current_FREQ_RANGE_HZ": [
+    3.0,
+    7.0
+  ],
+  "suggested_kg_median": 0.329,
+  "suggested_kg_p25_p75": [
+    0.277,
+    0.388
+  ],
+  "current_KG_values": {
+    "mild": 0.34392600991020317,
+    "mild-moderate": 0.3097128130262267,
+    "moderate-severe": 0.35373533169595817,
+    "severe": 0.3288769848163199
+  }
+}

@@ -4,8 +4,7 @@ Test script to verify the updated Tremor.py functions work correctly
 with the new A_SUBJECT format.
 """
 import sys
-sys.path.insert(0, '/Volumes/NO NAME/Master Lina/Code')
-from Noise_simulation.Tremor import write_tremor_parkinson_params_file
+from tremor_simulation.Tremor import write_tremor_parkinson_params_file
 import tempfile
 import os
 

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
 import matplotlib.pyplot as plt
-import tremor_parkinson_config as pk_config
+import tremor_simulation.tremor_parkinson_config as pk_config
 
 def example_1_basic_tremor_generation():
     """

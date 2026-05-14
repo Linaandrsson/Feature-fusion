@@ -7,7 +7,7 @@ to generate realistic, patient-specific tremor for HAR datasets.
 """
 
 import numpy as np
-from tremor_parkinson_config import get_tremor_rms, print_tremor_summary, A_SUBJECT
+from tremor_simulation.tremor_parkinson_config import get_tremor_rms, print_tremor_summary, A_SUBJECT
 
 def example_1_basic_rms_calculation():
     """Example 1: Calculate RMS for specific scenarios"""

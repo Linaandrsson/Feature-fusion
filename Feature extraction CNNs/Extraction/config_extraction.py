@@ -5,17 +5,29 @@ from pathlib import Path
 # ============================================================
 
 # ========================= CHANGE THESE ===========================
-dataset_config = "s1_w1_aug2"      # Base config (stride_window_augmentation)
-variant_name = "fs50_WEAK_SIGNAL_w0p2"  # Which data variant to extract features FROM
-model_variant = "fs50_clean"       # Which variant models were trained ON
-seq_len = 50                       # Must match model training AND data FS!
+# dataset_config = "s4_w4_mixed"     # Base config (matches models_output_dir in training config)
+# variant_name = "s4_w4_fs50_tremor_clean"   # Which data variant to extract features FROM
+# model_variant = "fs50_tremor_mixed_all3"   # Which variant models were trained ON
+
+#mixed:
+# dataset_config = "s4_w4_mixed"
+# variant_name   = "s4_w4_fs50_tremor_clean"   # bytt for hver korrupt variant
+# model_variant  = "fs50_tremor_mixed_all3"
+
+#clean
+dataset_config = "s4_w4_clean"
+variant_name   = "s4_w4_fs50_tremor_clean_awgn_a100"   # bytt for hver korrupt variant
+model_variant  = "fs50_tremor_clean"
+
+seq_len = 200                       # Must match model training AND data FS! (50 Hz × 4s)
 # ==================================================================
 
 # Build paths using parameters
-workspace_root = Path("/Users/linaandersson/Library/CloudStorage/OneDrive-NTNU/master/Code")
-parent_dir = workspace_root / "data" / "Datagenerator_files" / dataset_config
-variant_dir = parent_dir / variant_name
-models_dir = workspace_root / "Feature extraction CNNs" / "Models" / dataset_config / model_variant
+workspace_root = Path(__file__).parents[2]  # Feature extraction CNNs -> Code
+_data_base     = workspace_root / "data" / "Tremor_datagenerator_files"
+variant_dir    = _data_base / variant_name
+parent_dir     = variant_dir / "splits"   # extract_features.py loads train/val/test_idx.txt from here
+models_dir     = workspace_root / "Feature extraction CNNs" / "Models" / dataset_config / model_variant
 
 # Which sensors to process
 SENSORS = {
@@ -34,7 +46,7 @@ batch_size = 256
 device = "cuda"  # or "cpu"
 
 # Output directory (features saved inside variant directory)
-output_dir = variant_dir / "ExtractedFeatures"
+output_dir = variant_dir / "ExtractedFeatures_clean" #cleanwhen exrtcated with clean feature extractor, mixed when the other
 
 def get_model_path(sensor_name: str) -> Path:
     """Get path to trained model checkpoint for a sensor."""

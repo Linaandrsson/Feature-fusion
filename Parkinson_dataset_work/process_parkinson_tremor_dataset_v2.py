@@ -28,8 +28,10 @@ import random
 import json
 import time
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, Tuple
 
+import pandas as pd
 from scipy.signal import resample
 
 # Use local copies of tremor modules (Parkinson-only)
@@ -53,7 +55,7 @@ NOISE_LEVEL = 0.01      # augmentation noise level (NOT tremor)
 # Dataset location
 script_dir = Path(__file__).parent.resolve()
 PARKINSON_PATH = script_dir / "Data" / "Data_parkinson"
-OUT_BASE = script_dir / "Data" / "Tremor_datagenerator_files"
+OUT_BASE = script_dir / "Data" / "Tremor_datagenerator_files_new"
 
 # Seeds
 SEED = 0                        # Controls augmentation noise
@@ -87,6 +89,19 @@ GENERATE_MIXED_TAIL_VARIANT = True
 # CONFIG - Diagnostics
 # ============================================================
 RUN_SANITY_CHECKS = False
+
+# ============================================================
+# CONFIG - Performance
+# ============================================================
+# PARALLEL_VARIANTS: run all CT variants concurrently with ThreadPoolExecutor.
+# Each variant builds its own tremor cache in its own thread (read-only shared data).
+# Gives ~2-4x wall-time speedup on multi-core servers.
+PARALLEL_VARIANTS = True
+
+# CACHE_XLS_AS_NPZ: on first load, write an NPZ sidecar next to each .xls file.
+# Subsequent runs skip xlrd/pandas entirely and load from the fast NPZ.
+# Delete <subject>/_xls_cache/ to force a full reload.
+CACHE_XLS_AS_NPZ = True
 
 # ============================================================
 # SENSOR COLUMN MAP (matching DataGenerator_Tremor.py)
@@ -214,8 +229,9 @@ def apply_awgn_raw(win_raw: np.ndarray, rng: np.random.Generator, rms_ratio: flo
 def flatten_channel_blocks(X_c_l: np.ndarray) -> np.ndarray:
     """X_c_l: (N, C, L) -> (N, C*L) in channel-block format."""
     N, C, L = X_c_l.shape
-    blocks = [X_c_l[:, c, :] for c in range(C)]
-    return np.concatenate(blocks, axis=1)
+    # C-order reshape: dims are (N, C, L) so flattening last two gives
+    # [ch0_t0..ch0_tL, ch1_t0..ch1_tL, ...] — correct channel-block order.
+    return X_c_l.reshape(N, C * L)
 
 
 def extract_body_part(sensor_name: str) -> str:
@@ -301,8 +317,6 @@ def _load_sensor_sheet(file_path: Path, sheet_name: str) -> Optional[np.ndarray]
     Returns:
         (T, 9) array with Cal1..Cal9 data, or None if sheet not found
     """
-    import pandas as pd
-    
     try:
         xls = pd.ExcelFile(file_path)
         normalized_to_actual = {_normalize_sheet_name(s): s for s in xls.sheet_names}
@@ -329,6 +343,72 @@ def _load_sensor_sheet(file_path: Path, sheet_name: str) -> Optional[np.ndarray]
         
     except Exception:
         return None
+
+
+def _sheet_cache_key(sheet_name: str) -> str:
+    """Numpy-safe savez key for a sensor location name."""
+    return sheet_name.replace(" ", "_")
+
+
+def _load_all_sheets(file_path: Path) -> Dict[str, Optional[np.ndarray]]:
+    """Load all sensor sheets from one Excel file in a single open.
+
+    When CACHE_XLS_AS_NPZ is True, a small NPZ sidecar is written next to the
+    .xls file on the first read.  Every subsequent run loads from the NPZ,
+    skipping xlrd/pandas entirely and giving a large speedup on NFS.
+    Cache is invalidated automatically when the .xls is newer than its sidecar.
+    """
+    if CACHE_XLS_AS_NPZ:
+        cache_dir  = file_path.parent / "_xls_cache"
+        cache_path = cache_dir / f"{file_path.stem}.npz"
+        try:
+            if (
+                cache_path.exists()
+                and cache_path.stat().st_mtime >= file_path.stat().st_mtime
+            ):
+                npz = np.load(cache_path, allow_pickle=False)
+                return {
+                    s: npz[_sheet_cache_key(s)] if _sheet_cache_key(s) in npz.files else None
+                    for s in SENSOR_LOCATIONS
+                }
+        except Exception:
+            pass  # fall through to slow path
+
+    # ---- Slow path: parse XLS with pandas ----
+    result: Dict[str, Optional[np.ndarray]] = {}
+    try:
+        xls = pd.ExcelFile(file_path)
+        normalized_to_actual = {_normalize_sheet_name(s): s for s in xls.sheet_names}
+        for sheet_name in SENSOR_LOCATIONS:
+            sheet_key = _normalize_sheet_name(sheet_name)
+            if sheet_key not in normalized_to_actual:
+                result[sheet_name] = None
+                continue
+            actual_sheet = normalized_to_actual[sheet_key]
+            df = pd.read_excel(xls, sheet_name=actual_sheet)
+            if df.shape[1] < 10:
+                result[sheet_name] = None
+                continue
+            numeric = df.iloc[:, 1:10].apply(pd.to_numeric, errors="coerce").dropna(how="any")
+            result[sheet_name] = None if numeric.empty else numeric.to_numpy(dtype=np.float32)
+    except Exception:
+        result = {s: None for s in SENSOR_LOCATIONS}
+
+    # ---- Write NPZ sidecar for future runs (non-fatal on failure) ----
+    if CACHE_XLS_AS_NPZ:
+        try:
+            cache_dir.mkdir(exist_ok=True)
+            save_kwargs = {
+                _sheet_cache_key(s): arr
+                for s, arr in result.items()
+                if arr is not None
+            }
+            if save_kwargs:
+                np.savez(cache_path, **save_kwargs)
+        except Exception:
+            pass
+
+    return result
 
 
 # ============================================================
@@ -381,6 +461,19 @@ def build_parkinson_dataset() -> Tuple[Dict[str, List], Dict, Dict]:
         cursor = {sheet: 0 for sheet in SENSOR_LOCATIONS}
         n_trials = 0
 
+        # Preload all trial files in parallel — network FS benefits from
+        # concurrent reads; each file is opened once for all 5 sheets.
+        preloaded: Dict[Path, Dict[str, Optional[np.ndarray]]] = {}
+        n_io_workers = min(8, max(1, len(trial_files)))
+        if n_io_workers > 1:
+            with ThreadPoolExecutor(max_workers=n_io_workers) as io_pool:
+                future_to_path = {io_pool.submit(_load_all_sheets, f): f for f in trial_files}
+                for fut in as_completed(future_to_path):
+                    preloaded[future_to_path[fut]] = fut.result()
+        else:
+            for f in trial_files:
+                preloaded[f] = _load_all_sheets(f)
+
         for trial_file in trial_files:
             activity_name = _infer_activity_name(trial_file.stem)
             if activity_name is None:
@@ -390,12 +483,12 @@ def build_parkinson_dataset() -> Tuple[Dict[str, List], Dict, Dict]:
             if activity_label is None:
                 continue
 
-            # Load all 5 sensor sheets from this trial
-            sheets_data = {}
-            for sheet_name in SENSOR_LOCATIONS:
-                cal9 = _load_sensor_sheet(trial_file, sheet_name)
-                if cal9 is not None:
-                    sheets_data[sheet_name] = cal9
+            # Use preloaded data (single file open for all 5 sheets)
+            sheets_data = {
+                sheet: arr
+                for sheet, arr in preloaded[trial_file].items()
+                if arr is not None
+            }
 
             if not sheets_data:
                 continue
@@ -532,6 +625,13 @@ def generate_variant(
     
     if is_pd_mode:
         print("  PD-only mode (skip tremor cache)")
+        tremor_cache = {}
+    elif augment_mode == "clean" or not GENERATE_TREMOR:
+        # Clean mode: every window gets tremor_score=0 and zero noise.
+        # Skip the expensive Van der Pol tremor simulation entirely.
+        # An empty cache causes all cache lookups to return None, which the
+        # per-window code already handles by defaulting to tremor_score=0.
+        print("  Clean/no-tremor mode — skipping tremor cache build")
         tremor_cache = {}
     else:
         # Build cache for all windows across all sheets (cache is per window, not per sheet)
@@ -813,7 +913,7 @@ def generate_variant(
 
             # Save NPZ
             npz_out = variant_dir / f"{sensor_name}.npz"
-            np.savez_compressed(
+            np.savez(
                 npz_out,
                 X=X,
                 y=y,
@@ -843,7 +943,7 @@ def generate_variant(
                 tremor_score
             ])
             sensor_txt = np.hstack([flat_rows, all_labels]).astype(np.float32)
-            np.savetxt(txt_out, sensor_txt, delimiter=",", fmt="%.6f")
+            pd.DataFrame(sensor_txt).to_csv(txt_out, index=False, header=False, float_format="%.6f")
 
             print(f"      ✓ {sensor_name}: X={X.shape}")
 
@@ -928,14 +1028,29 @@ def main():
     print(f"\nGenerating {len(variants_to_generate)} variants...")
     print("=" * 80)
 
-    for variant_name, augment_mode, specs, is_pd in variants_to_generate:
-        generate_variant(
-            variant_name=variant_name,
-            augment_mode=augment_mode,
-            window_specs=specs,
-            subject_data=subject_data,
-            is_pd_mode=is_pd,
-        )
+    # Split CT and PD variants — CT variants are independent and can run in parallel.
+    ct_variants = [(n, m, s, p) for n, m, s, p in variants_to_generate if not p]
+    pd_variants  = [(n, m, s, p) for n, m, s, p in variants_to_generate if p]
+
+    if PARALLEL_VARIANTS and len(ct_variants) > 1:
+        print(f"\nRunning {len(ct_variants)} CT variants in parallel (ThreadPoolExecutor)...")
+        print("  (per-variant progress lines may interleave — check run_logs/ for clean output)")
+        with ThreadPoolExecutor(max_workers=len(ct_variants)) as pool:
+            futs = {
+                pool.submit(generate_variant, n, m, s, subject_data, p): n
+                for n, m, s, p in ct_variants
+            }
+            for fut in as_completed(futs):
+                exc = fut.exception()
+                if exc:
+                    raise exc
+    else:
+        for n, m, s, p in ct_variants:
+            generate_variant(n, m, s, subject_data, p)
+
+    # PD variant runs after CT variants finish (usually just one)
+    for n, m, s, p in pd_variants:
+        generate_variant(n, m, s, subject_data, p)
 
     print("=" * 80)
     print("✓ All variants generated successfully!")

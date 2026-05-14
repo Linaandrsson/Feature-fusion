@@ -25,6 +25,7 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.metrics import accuracy_score, f1_score
 from pathlib import Path
 from collections import defaultdict
+import csv
 import json
 import os
 import random
@@ -57,11 +58,15 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Data paths and sensors
 # -------------------------------
 # Base directory where tremor data lives
-base_data_dir = Path("/Volumes/NO NAME/Master Lina/Code/data/Tremor_datagenerator_files")
+base_data_dir = Path(__file__).parents[2] / "data" / "Tremor_datagenerator_files"
 
 # Tremor augmentation variants (will be combined as augmentations)
 #"s2_w2_fs50_tremor_clean", "s2_w2_fs50_tremor_mild_mod", "s2_w2_fs50_tremor_mod_severe"
-tremor_variants = ["s2_w2_fs50_tremor_clean", "s2_w2_fs50_tremor_mild_mod", "s2_w2_fs50_tremor_mod_severe"]
+#tremor_variants = ["s4_w4_fs50_tremor_clean", "s4_w4_fs50_tremor_clean_awgn", "s4_w4_fs50_tremor_clean_rotation"]
+ 
+#tremor_variants = ["s4_w4_fs50_tremor_clean",  "s2_w2_fs50_tremor_mild_mod", "s2_w2_fs50_tremor_mod_severe"]  # mixed (inconsistent window sizes!)
+tremor_variants = ["s4_w4_fs50_tremor_clean", "s4_w4_fs50_tremor_mild_mod", "s4_w4_fs50_tremor_mod_severe"]  # mixed
+#tremor_variants = ["s4_w4_fs50_tremor_clean"]  # clean only
 # Optional tag for report folder name.
 # Example: "mixed", "clean_only", "tremor_only"
 # If empty, folder stays "ablation_reports".
@@ -70,7 +75,6 @@ embeddings_folder_name = "Activity_ExtractedFeatures"  # Folder name where CNN e
 
 # Available sensors (ablation will test subsets of these)
 ALL_SENSORS = ["Acc_ankle", "Acc_arm", "Gyro_ankle", "Gyro_arm", "Mag_ankle", "Mag_arm", "Acc_chest", "ECG"]
-ALL_SENSORS = ["Acc_arm", "Gyro_arm", "Mag_arm"]
 # Subject-based splits (to prevent data leakage)
 TEST_SUBJECTS = [5, 10]
 VAL_SUBJECTS = [2, 7]
@@ -79,7 +83,7 @@ VAL_SUBJECTS = [2, 7]
 # -------------------------------
 # Sensor Ablation Configuration
 # -------------------------------
-ABLATION_K = [len(ALL_SENSORS)]  # List of subset sizes to test (e.g., [2, 3] tests all 2-sensor and 3-sensor combos)
+ABLATION_K = [6]  # List of subset sizes to test (e.g., [2, 3] tests all 2-sensor and 3-sensor combos)
                      # Set to [len(ALL_SENSORS)] to test full sensor set only
 
 print(f"\nUsing tremor variants as augmentations:")
@@ -120,17 +124,19 @@ SCRIPT_DIR = Path(__file__).parent
 
 LOG_DIR = SCRIPT_DIR / "tremor_logs"
 LOG_DIR.mkdir(exist_ok=True)
-LOG_FILE = LOG_DIR / "tremor_fusion_ablation.jsonl"
 
 _tag = ABLATION_REPORT_TAG.strip()
 if _tag:
     # Keep folder names shell/file-system friendly.
     _safe_tag = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in _tag)
     ABLATION_REPORT_DIR = LOG_DIR / f"ablation_reports_{_safe_tag}"
+    ABLATION_JSON_DIR   = LOG_DIR / f"ablation_json_files_{_safe_tag}"
 else:
     ABLATION_REPORT_DIR = LOG_DIR / "ablation_reports"
+    ABLATION_JSON_DIR   = LOG_DIR / "ablation_json_files"
 
 ABLATION_REPORT_DIR.mkdir(exist_ok=True)
+ABLATION_JSON_DIR.mkdir(exist_ok=True)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -374,7 +380,8 @@ def train_sensor_combination(
     embed_dim: int,
     num_classes: int,
     all_sensors: List[str],
-    experiment_id: str
+    experiment_id: str,
+    json_file: Path = None,
 ) -> Dict:
     """
     Train and evaluate a specific sensor combination using tremor data.
@@ -446,9 +453,12 @@ def train_sensor_combination(
     print(f"  Val: {len(val_dataset)} samples")
     print(f"  Test: {len(test_dataset)} samples")
     
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                              num_workers=4, pin_memory=True, persistent_workers=True)
+    val_loader   = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
+                              num_workers=4, pin_memory=True, persistent_workers=True)
+    test_loader  = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,
+                              num_workers=4, pin_memory=True, persistent_workers=True)
     
     # ---- Step 3: Create model ----
     print("\n[3/5] Creating fusion model...")
@@ -492,8 +502,8 @@ def train_sensor_combination(
     
     def unpack_batch(batch):
         *Z, y = batch
-        Z = [z.to(device) for z in Z]
-        y = y.to(device)
+        Z = [z.to(device, non_blocking=True) for z in Z]
+        y = y.to(device, non_blocking=True)
         return Z, y
     
     for epoch in range(epochs):
@@ -631,12 +641,12 @@ def train_sensor_combination(
     }
     
     # Log run results
-    try:
-        with open(LOG_FILE, "a") as f:
-            f.write(json.dumps(results) + "\n")
-        print(f"  ✓ Logged to {LOG_FILE}")
-    except Exception as e:
-        print(f"  ✗ Warning: Could not write to {LOG_FILE}: {e}")
+    if json_file is not None:
+        try:
+            with open(json_file, "a") as f:
+                f.write(json.dumps(results) + "\n")
+        except Exception as e:
+            print(f"  ✗ Warning: Could not write to {json_file}: {e}")
     
     print("\n" + "="*70)
     print(f"Combination complete: {sensors}")
@@ -658,8 +668,9 @@ def main():
         print(f"  - {variant}")
     print(f"\nSubject splits: TEST=[5,10], VAL=[2,7], TRAIN=[1,3,4,6,8,9]")
     
-    # Timestamp for this run (readable format: MMDD_HHMM)
-    run_timestamp = datetime.now().strftime("%m%d_%H%M")
+    # Timestamp for this run — includes seed so files are unique across runs
+    _ts = datetime.now().strftime("%m%d_%H%M")
+    run_timestamp = f"{_ts}_s{SEED}"
     ablation_k_list = ABLATION_K if isinstance(ABLATION_K, list) else [ABLATION_K]
     
     # ---- Step 1: Load embeddings from all sensors ----
@@ -709,9 +720,11 @@ def main():
         print(f"TESTING ALL {k}-SENSOR COMBINATIONS")
         print(f"{'='*70}")
         
-        # Create experiment ID for this k-value
+        # Create experiment ID and per-run jsonl file for this k-value
         experiment_id = f"tremor_ablation_k{k}_{run_timestamp}"
+        json_file = ABLATION_JSON_DIR / f"tremor_ablation_k{k}_{run_timestamp}.jsonl"
         print(f"\nExperiment ID: {experiment_id}")
+        print(f"JSON log:      {json_file}")
         
         # Generate all k-combinations
         sensor_combinations = list(combinations(range(len(ALL_SENSORS)), k))
@@ -735,7 +748,8 @@ def main():
                     embed_dim=embed_dim,
                     num_classes=num_classes,
                     all_sensors=ALL_SENSORS,
-                    experiment_id=experiment_id
+                    experiment_id=experiment_id,
+                    json_file=json_file,
                 )
                 
                 result["combination_id"] = combo_idx
@@ -842,6 +856,45 @@ def main():
     
     print(f"\n✓ Summary report saved to: {report_file}")
 
+    # Save CSV for easy plotting (box plots: x=num_sensors, y=accuracy/f1)
+    csv_file = ABLATION_REPORT_DIR / f"tremor_ablation_k{ablation_k_list}_results_{run_timestamp}.csv"
+    csv_fields = ["timestamp", "seed", "k", "sensors", "num_sensors",
+                  "test_accuracy", "test_f1_macro", "test_loss",
+                  "val_accuracy", "val_f1_macro", "val_loss"]
+    with open(csv_file, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=csv_fields)
+        writer.writeheader()
+        for result in all_results:
+            writer.writerow({
+                "timestamp":    run_timestamp,
+                "seed":         SEED,
+                "k":            result["num_sensors"],
+                "sensors":      "|".join(result["sensors"]),
+                "num_sensors":  result["num_sensors"],
+                "test_accuracy": result["test_accuracy"],
+                "test_f1_macro": result["test_f1_macro"],
+                "test_loss":    result["test_loss"],
+                "val_accuracy": result["val_accuracy"],
+                "val_f1_macro": result["val_f1_macro"],
+                "val_loss":     result["val_loss"],
+            })
+    print(f"✓ CSV results saved to:   {csv_file}")
+
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Tremor sensor ablation study")
+    parser.add_argument("--ablation_k", type=int, default=None,
+                        help="Override ABLATION_K with a single integer (e.g. --ablation_k 3)")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Override SEED for reproducibility (e.g. --seed 42)")
+    args = parser.parse_args()
+    if args.ablation_k is not None:
+        ABLATION_K = [args.ablation_k]
+    if args.seed is not None:
+        SEED = args.seed
+        random.seed(SEED)
+        np.random.seed(SEED)
+        torch.manual_seed(SEED)
+        torch.cuda.manual_seed_all(SEED)
     main()

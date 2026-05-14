@@ -485,6 +485,25 @@ SCALAR_METRICS = ("acc_rms","gyro_rms","kg_ratio","dom_freq","spectral_cent",
                   "band_power","band_ratio","acc_rms_band37")
 
 
+def _top_bottom_n(vals: np.ndarray, n: int) -> dict:
+    """Return mean (and count used) for the top-n and bottom-n values."""
+    v = vals[np.isfinite(vals) & (vals > 0)]
+    if len(v) == 0:
+        return {"n_total": 0,
+                "top_n_used": 0,  "top_n_mean": float("nan"),
+                "bottom_n_used": 0, "bottom_n_mean": float("nan")}
+    k = min(n, len(v))
+    sorted_desc = np.sort(v)[::-1]
+    sorted_asc  = np.sort(v)
+    return {
+        "n_total":       int(len(v)),
+        "top_n_used":    int(k),
+        "top_n_mean":    float(np.mean(sorted_desc[:k])),
+        "bottom_n_used": int(k),
+        "bottom_n_mean": float(np.mean(sorted_asc[:k])),
+    }
+
+
 def _group_subset(windows, group):
     return [w for w in windows if w["group"] == group]
 
@@ -674,6 +693,34 @@ def pd_upper_end_rms_stats(windows):
             "n_top_100_used": gyro_n100,
         },
     }
+
+
+def kg_extremes_by_location(windows, n: int = 100) -> dict:
+    """Mean of the top-n and bottom-n per-segment k_g values, broken down by group and location.
+
+    k_g is computed per window as gyro_rms / acc_rms (bandpass 2-12 Hz).
+    Only windows with acc_rms > 1e-9 and finite k_g are included.
+
+    Returns nested dict:  out[group][location]  with keys:
+        n_total, top_n_used, top_n_mean, bottom_n_used, bottom_n_mean
+    An "_all" key aggregates across all locations for each group.
+    """
+    out = {}
+    for g in ("ct", "pd", "sim"):
+        sub = _group_subset(windows, g)
+        if not sub:
+            continue
+        out[g] = {}
+        # Overall across all locations
+        all_kg = _extract(sub, "kg_ratio")
+        out[g]["_all"] = _top_bottom_n(all_kg, n)
+        # Per body location
+        for loc in SENSOR_SHEETS:
+            loc_sub = [w for w in sub if w["location"] == loc]
+            if not loc_sub:
+                continue
+            out[g][loc] = _top_bottom_n(_extract(loc_sub, "kg_ratio"), n)
+    return out
 
 
 def _assign_score_from_reference_amplitude(ref_amp):
@@ -1104,6 +1151,77 @@ def aggregate_by_sim_mode(windows):
             "tremor_prevalence": float(np.mean([w["tremor_present"] for w in sub])),
         }
     return out
+
+
+def pd_lower_arm_tremor_iqr_stats(records):
+    """IQR statistics for tremor-present PD lower-arm windows.
+
+    Subset:
+      - PD group only
+      - Lower arm locations only (Lower Right, Lower Left)
+      - Tremor-present windows only (acc_rms_band37 > TREMOR_PRESENCE_THRESHOLD)
+
+    Features computed per window:
+      - dom_freq        : dominant frequency via Welch PSD (2-12 Hz bandpass input)
+      - acc_rms_band37  : 3D acc RMS bandpass-filtered to 3-7 Hz
+      - gyro_rms_band37 : 3D gyro RMS bandpass-filtered to 3-7 Hz
+      - k_g             : gyro_rms_band37 / acc_rms_band37
+    """
+    win = int(round(PRIMARY_WINDOW_SEC * FS_ORIGINAL))
+    dom_freqs, acc_vals, gyro_vals = [], [], []
+
+    for rec in records:
+        if rec["group"] != "pd":
+            continue
+        if rec["location"] not in LOWER_LOCS:
+            continue
+
+        acc_full  = rec["data"][:, ACC_COLS]
+        gyro_full = rec["data"][:, GYRO_COLS]
+        if len(acc_full) < win:
+            continue
+
+        acc_bp37  = _bp_filter(acc_full,  TREMOR_BAND_LO, TREMOR_BAND_HI, FS_ORIGINAL)
+        gyro_bp37 = _bp_filter(gyro_full, TREMOR_BAND_LO, TREMOR_BAND_HI, FS_ORIGINAL)
+        acc_bp    = _bp_filter(acc_full,  TREMOR_LO_HZ,   TREMOR_HI_HZ,   FS_ORIGINAL)
+
+        n_w = len(acc_full) // win
+        for w in range(n_w):
+            s, e = w * win, (w + 1) * win
+            acc_rms37 = _rms_3d(acc_bp37[s:e])
+            if acc_rms37 <= TREMOR_PRESENCE_THRESHOLD:
+                continue  # skip non-tremor windows
+            gyro_rms37 = _rms_3d(gyro_bp37[s:e])
+            wf = _welch_features(acc_bp[s:e], FS_ORIGINAL)
+            acc_vals.append(acc_rms37)
+            gyro_vals.append(gyro_rms37)
+            dom_freqs.append(wf["dom_freq"])
+
+    acc_arr  = np.array(acc_vals,  dtype=float)
+    gyro_arr = np.array(gyro_vals, dtype=float)
+    freq_arr = np.array(dom_freqs, dtype=float)
+
+    valid  = (acc_arr > 1e-9) & np.isfinite(acc_arr) & np.isfinite(gyro_arr)
+    kg_arr = np.where(valid, gyro_arr / acc_arr, float("nan"))
+
+    def _iqr(arr):
+        v = arr[np.isfinite(arr)]
+        if len(v) == 0:
+            return {"p25": float("nan"), "median": float("nan"), "p75": float("nan"), "n": 0}
+        return {
+            "p25":    float(np.percentile(v, 25)),
+            "median": float(np.median(v)),
+            "p75":    float(np.percentile(v, 75)),
+            "n":      int(len(v)),
+        }
+
+    return {
+        "n_windows":       int(len(acc_arr)),
+        "dom_freq":        _iqr(freq_arr),
+        "acc_rms_band37":  _iqr(acc_arr),
+        "gyro_rms_band37": _iqr(gyro_arr),
+        "k_g":             _iqr(kg_arr),
+    }
 
 
 # ===========================================================================
@@ -1810,7 +1928,8 @@ def generate_report(agg, comparison, suggestions, freq_by_wl,
                     pd_activity_scaling=None,
                     pd_coverage_sim=None,
                     pd_vs_sim_location=None,
-                    pd_location_scaling=None):
+                    pd_location_scaling=None,
+                    kg_extremes=None):
     """Return (full_report, summary)."""
     lines = []
     def h1(t): lines.append(f"\n{'='*72}\n  {t}\n{'='*72}")
@@ -2233,6 +2352,38 @@ def generate_report(agg, comparison, suggestions, freq_by_wl,
         ms = c["match_score_sim_vs_pd"]
         ln(f"  {rank:<6} {label:<18} {_fmt(pd_med):>12} {_fmt(sim_med):>12} {rel_str:>11}  {_bar(ms, 8)}")
 
+    # 8B. k_g extremes by location
+    h1("8B. K_G EXTREMES BY LOCATION  (top-N and bottom-N per-segment k_g = gyro_rms / acc_rms)")
+    ln("  Computed on bandpass-filtered (2-12 Hz) RMS values per window.")
+    ln("  Only windows with positive, finite k_g are included.")
+    _kg_n = None
+    if kg_extremes:
+        for g in ("ct", "pd", "sim"):
+            if g not in kg_extremes:
+                continue
+            h2(f"{LABELS[g]}")
+            g_data = kg_extremes[g]
+            # Infer N from _all entry
+            _all = g_data.get("_all", {})
+            _kg_n = int(_all.get("top_n_used", 100)) if _all else 100
+            ln(f"  {'Location':<16} {'N total':>9} {'Top-{n} mean':>13} {'Bottom-{n} mean':>16}".replace("{n}", str(_kg_n)))
+            ln("  " + "-" * 58)
+            # Overall row first
+            if "_all" in g_data:
+                r = g_data["_all"]
+                ln(f"  {'ALL (combined)':<16} {r.get('n_total',0):>9} "
+                   f"{_fmt(r.get('top_n_mean')):>13} {_fmt(r.get('bottom_n_mean')):>16}")
+            # Per-location rows
+            for loc in SENSOR_SHEETS:
+                if loc not in g_data:
+                    continue
+                r = g_data[loc]
+                code = LOCATION_CODE.get(loc, loc)
+                ln(f"  {loc:<16} {r.get('n_total',0):>9} "
+                   f"{_fmt(r.get('top_n_mean')):>13} {_fmt(r.get('bottom_n_mean')):>16}  [{code}]")
+    else:
+        ln("  (not available)")
+
     # 9. Suggestions
     h1("9. DATA-DRIVEN CONFIG SUGGESTIONS  (from tremor-present PD windows)")
     ln("  DISCLAIMER: These values are empirical estimates derived from this dataset")
@@ -2472,6 +2623,7 @@ def main():
     tremor_freq_stats   = tremor_only_freq_analysis(windows)
     tremor_only_comp    = build_tremor_only_comparison(tremor_freq_stats)
     pd_upper_end        = pd_upper_end_rms_stats(windows)
+    kg_extremes         = kg_extremes_by_location(windows, n=100)
 
     print("\n[7/7] Generating plots...")
     plot_group_distributions(windows)
@@ -2493,7 +2645,8 @@ def main():
                                            pd_activity_scaling=pd_activity_scaling,
                                            pd_vs_sim_location=pd_vs_sim_location,
                                            pd_location_scaling=pd_location_scaling,
-                                           pd_coverage_sim=pd_coverage_sim)
+                                           pd_coverage_sim=pd_coverage_sim,
+                                           kg_extremes=kg_extremes)
 
     (OUTPUT_DIR / "report.txt").write_text(full_report, encoding="utf-8")
     (OUTPUT_DIR / "summary.txt").write_text(summary, encoding="utf-8")
@@ -2515,6 +2668,7 @@ def main():
         "pd_vs_sim_per_location": _jsonify(pd_vs_sim_location),
         "pd_location_scaling":    _jsonify(pd_location_scaling),
         "pd_coverage_by_sim":     _jsonify(pd_coverage_sim),
+        "kg_extremes_by_location": _jsonify(kg_extremes),
         "sim_analysis_modes":     SIM_ANALYSIS_MODES,
     }
     (OUTPUT_DIR / "data.json").write_text(json.dumps(json_out, indent=2), encoding="utf-8")
@@ -2525,6 +2679,36 @@ def main():
 
     print("\n" + summary)
     print(f"\nAll outputs -> {OUTPUT_DIR}")
+
+    # -----------------------------------------------------------------------
+    # Additional: IQR statistics for PD tremor-present lower-arm windows
+    # -----------------------------------------------------------------------
+    iqr = pd_lower_arm_tremor_iqr_stats(records)
+
+    def _fiqr(s, key):
+        v = s.get(key, float("nan"))
+        return "n/a" if not np.isfinite(v) else f"{v:.4f}"
+
+    print("")
+    print("-- PD tremor-present (lower arm only) --")
+    print(f"   (n={iqr['n_windows']} windows, locations: Lower Right + Lower Left,"
+          f" threshold={TREMOR_PRESENCE_THRESHOLD})")
+    print("")
+    print("Dominant frequency (Hz):")
+    s = iqr["dom_freq"]
+    print(f"  p25={_fiqr(s,'p25')}, median={_fiqr(s,'median')}, p75={_fiqr(s,'p75')}")
+    print("")
+    print("Acc tremor RMS (3\u20137 Hz):")
+    s = iqr["acc_rms_band37"]
+    print(f"  p25={_fiqr(s,'p25')}, median={_fiqr(s,'median')}, p75={_fiqr(s,'p75')}")
+    print("")
+    print("Gyro tremor RMS (3\u20137 Hz):")
+    s = iqr["gyro_rms_band37"]
+    print(f"  p25={_fiqr(s,'p25')}, median={_fiqr(s,'median')}, p75={_fiqr(s,'p75')}")
+    print("")
+    print("k_g (gyro/acc):")
+    s = iqr["k_g"]
+    print(f"  p25={_fiqr(s,'p25')}, median={_fiqr(s,'median')}, p75={_fiqr(s,'p75')}")
 
 
 if __name__ == "__main__":
