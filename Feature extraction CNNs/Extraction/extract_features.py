@@ -35,7 +35,9 @@ if _variant_name:
     _workspace_root = Path(_cfg.__file__).parents[2]
     _data_base      = _workspace_root / "data" / "Tremor_datagenerator_files"
     variant_dir     = _data_base / _variant_name
-    parent_dir      = variant_dir / "splits"
+    _variant_splits = variant_dir / "splits"
+    _training_splits = _workspace_root / "Feature extraction CNNs" / "Training" / "s4_w4_aug1_fs50_clean" / "splits"
+    parent_dir      = _variant_splits if _variant_splits.exists() else _training_splits
     _dc             = _dataset_config or _cfg.dataset_config
     _mv             = _model_variant  or _cfg.model_variant
     models_dir      = _workspace_root / "Feature extraction CNNs" / "Models" / _dc / _mv
@@ -116,68 +118,53 @@ def build_model_from_ckpt(ckpt: dict, num_channels: int, seq_len: int, num_class
 
 
 def load_data(sensor_name: str, num_channels: int):
-    """Load sensor data and splits."""
-    # Load sensor data
+    """Load sensor data and split by subject ID (identical to training script logic)."""
+    # Subject-based splits — must match training config
+    TEST_SUBJECTS = [5, 10]
+    VAL_SUBJECTS  = [2, 7]
+
     data_path = get_data_path(sensor_name)
     if not data_path.exists():
         raise FileNotFoundError(f"Data not found: {data_path}")
-    
+
     data = np.loadtxt(data_path, delimiter=",")
-    
-    # Data format (tremor-compatible): 
-    # [...sensor data...] | [-7] activity | [-6] subject | [-5] base_idx | 
+
+    # Data format (tremor-compatible):
+    # [...sensor data...] | [-7] activity | [-6] subject | [-5] base_idx |
     # [-4] tremor_freq | [-3] tremor_acc_rms | [-2] tremor_gyro_rms | [-1] tremor_score
     X = data[:, :-7]  # Sensor data only (all columns except last 7)
-    y_activity = data[:, -7].astype(int) - 1  # Activity label 1..12 -> 0..11
-    y_subject = data[:, -6].astype(int)  # Subject ID
-    base_idx = data[:, -5].astype(int)  # Base window index
-    tremor_freq = data[:, -4].astype(np.float32)  # Tremor frequency
-    tremor_acc_rms = data[:, -3].astype(np.float32)  # Tremor ACC RMS
-    tremor_gyro_rms = data[:, -2].astype(np.float32)  # Tremor Gyro RMS
-    tremor_score = data[:, -1].astype(int)  # Tremor score 0-4
-    
+    y_activity  = data[:, -7].astype(int) - 1   # Activity label 1..12 -> 0..11
+    y_subject   = data[:, -6].astype(int)        # Subject ID
+    base_idx    = data[:, -5].astype(int)
+    tremor_freq     = data[:, -4].astype(np.float32)
+    tremor_acc_rms  = data[:, -3].astype(np.float32)
+    tremor_gyro_rms = data[:, -2].astype(np.float32)
+    tremor_score    = data[:, -1].astype(int)
+
     X = X.reshape(-1, num_channels, seq_len).astype(np.float32)
-    
-    # Load splits from parent directory
-    train_idx = np.loadtxt(parent_dir / "train_idx.txt", dtype=int)
-    val_idx = np.loadtxt(parent_dir / "val_idx.txt", dtype=int)
-    test_idx = np.loadtxt(parent_dir / "test_idx.txt", dtype=int)
-    
-    # Split all data
-    X_train, y_activity_train = X[train_idx], y_activity[train_idx]
-    X_val, y_activity_val = X[val_idx], y_activity[val_idx]
-    X_test, y_activity_test = X[test_idx], y_activity[test_idx]
-    
-    # Also split metadata
-    meta_train = {
-        "activity": y_activity_train,
-        "subject": y_subject[train_idx],
-        "base_idx": base_idx[train_idx],
-        "tremor_freq": tremor_freq[train_idx],
-        "tremor_acc_rms": tremor_acc_rms[train_idx],
-        "tremor_gyro_rms": tremor_gyro_rms[train_idx],
-        "tremor_score": tremor_score[train_idx],
-    }
-    meta_val = {
-        "activity": y_activity_val,
-        "subject": y_subject[val_idx],
-        "base_idx": base_idx[val_idx],
-        "tremor_freq": tremor_freq[val_idx],
-        "tremor_acc_rms": tremor_acc_rms[val_idx],
-        "tremor_gyro_rms": tremor_gyro_rms[val_idx],
-        "tremor_score": tremor_score[val_idx],
-    }
-    meta_test = {
-        "activity": y_activity_test,
-        "subject": y_subject[test_idx],
-        "base_idx": base_idx[test_idx],
-        "tremor_freq": tremor_freq[test_idx],
-        "tremor_acc_rms": tremor_acc_rms[test_idx],
-        "tremor_gyro_rms": tremor_gyro_rms[test_idx],
-        "tremor_score": tremor_score[test_idx],
-    }
-    
-    return (X_train, X_val, X_test), (meta_train, meta_val, meta_test)
+
+    # Subject-based splitting (identical to Acc_ankle_CNN.py in Training/)
+    train_idx = np.where(~np.isin(y_subject, TEST_SUBJECTS + VAL_SUBJECTS))[0]
+    val_idx   = np.where( np.isin(y_subject, VAL_SUBJECTS))[0]
+    test_idx  = np.where( np.isin(y_subject, TEST_SUBJECTS))[0]
+
+    print(f"  Subject-based splits: train={len(train_idx)} val={len(val_idx)} test={len(test_idx)}")
+    print(f"    train subjects: {sorted(set(y_subject[train_idx]))}")
+    print(f"    val   subjects: {sorted(set(y_subject[val_idx]))}")
+    print(f"    test  subjects: {sorted(set(y_subject[test_idx]))}")
+
+    def _meta(idx):
+        return {
+            "activity":      y_activity[idx],
+            "subject":       y_subject[idx],
+            "base_idx":      base_idx[idx],
+            "tremor_freq":   tremor_freq[idx],
+            "tremor_acc_rms":  tremor_acc_rms[idx],
+            "tremor_gyro_rms": tremor_gyro_rms[idx],
+            "tremor_score":  tremor_score[idx],
+        }
+
+    return (X[train_idx], X[val_idx], X[test_idx]), (_meta(train_idx), _meta(val_idx), _meta(test_idx))
 
 
 def extract_embeddings(model, loader, device):
@@ -206,10 +193,10 @@ def main(sensor_name: str):
     print(f"\n{'='*60}")
     print(f"Extracting features for: {sensor_name}")
     print(f"{'='*60}")
-    print(f"Parent dir (splits): {parent_dir}")
     print(f"Variant dir (data):  {variant_dir}")
     print(f"Models dir:          {models_dir}")
     print(f"Output dir:          {output_dir}")
+    print(f"Splitting:           subject-based (TEST=[5,10], VAL=[2,7])")
     
     # Load data
     print(f"\n[1/4] Loading data...")

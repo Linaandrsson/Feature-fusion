@@ -94,7 +94,7 @@ base_data_dir = Path(__file__).parents[3] / "data" / "Tremor_datagenerator_files
 
 #clean:
 tremor_variants = ["s4_w4_fs50_tremor_clean"]  # clean 
-ABLATION_REPORT_TAG = "clean_on_tremor_awgn_a100"
+ABLATION_REPORT_TAG = "sanity_clean_train_clean_copy_test"
 embeddings_folder_name = "ExtractedFeatures_clean"  # Folder name where CNN embeddings are stored (train/val)
 
 
@@ -104,7 +104,7 @@ embeddings_folder_name = "ExtractedFeatures_clean"  # Folder name where CNN embe
 #   "s4_w4_fs50_corrupt_timeshift", "s4_w4_fs50_corrupt_rotation",
 #   "s4_w4_fs50_corrupt_all_no_dropout", "s4_w4_fs50_corrupt_awgn_weak", "s4_w4_fs50_corrupt_awgn_timeshift"
 #   "s4_w4_fs50_awgn_a100" → ALPHA=0.1 AWGN (std-based, ~20 dB SNR)
-corrupt_test_variant = "s4_w4_fs50_tremor_clean_awgn_a100"   # fallback for sensors not in corrupt_test_mix
+corrupt_test_variant = "s4_w4_fs50_tremor_clean_copy"   # fallback for sensors not in corrupt_test_mix
 
 # Per-sensor test distribution — overrides corrupt_test_variant for listed sensors.
 # Format: {sensor_name: {variant_name: probability}}  — probabilities must sum to 1.0 per sensor.
@@ -140,7 +140,7 @@ VAL_SUBJECTS = [2, 7]
 # Sensor Ablation Configuration
 # -------------------------------
 ABLATION_K = [8]  # List of subset sizes to test (e.g., [2, 3] tests all 2-sensor and 3-sensor combos)
-                     # Set to [len(ALL_SENSORS)] to test full sensor set only
+                     # [8] = full 8-sensor set only; expand to [1,2,...,8] for full ablation sweep
 
 print(f"\nUsing tremor variants as augmentations:")
 for variant in tremor_variants:
@@ -1022,23 +1022,24 @@ def main():
     sensors_width = max(max_sensors_len + 2, 10)  # Min 10 chars
     ablated_width = max(max_ablated_len + 2, 10)  # Min 10 chars
     test_f1_width = 10
+    test_acc_width = 11
     test_loss_width = 11
     val_acc_width = 10
     
-    total_width = rank_width + sensors_width + ablated_width + test_f1_width + test_loss_width + val_acc_width + 5  # +5 for spacing
+    total_width = rank_width + sensors_width + ablated_width + test_f1_width + test_acc_width + test_loss_width + val_acc_width + 5  # +5 for spacing
     
     # Print summary
     print(f"\nTested {len(all_results)} sensor combinations")
     print(f"\nRESULTS RANKED BY TEST F1 (MACRO):")
     print(f"{'='*total_width}")
-    print(f"{'Rank':<{rank_width}} {'Sensors':<{sensors_width}} {'Ablated':<{ablated_width}} {'Test F1':<{test_f1_width}} {'Test Loss':<{test_loss_width}} {'Val Acc':<{val_acc_width}}")
+    print(f"{'Rank':<{rank_width}} {'Sensors':<{sensors_width}} {'Ablated':<{ablated_width}} {'Test F1':<{test_f1_width}} {'Test Acc':<{test_acc_width}} {'Test Loss':<{test_loss_width}} {'Val Acc':<{val_acc_width}}")
     print(f"{'-'*total_width}")
     
     for rank, result in enumerate(all_results_sorted, 1):
         sensors_str = ", ".join(result["sensors"])
         ablated_str = ", ".join(result.get("ablated_sensors", []))
         print(f"{rank:<{rank_width}} {sensors_str:<{sensors_width}} {ablated_str:<{ablated_width}} {result['test_f1_macro']:.4f}      "
-              f"{result['test_loss']:.4f}       {result['val_accuracy']:.4f}")
+              f"{result['test_accuracy']:.4f}     {result['test_loss']:.4f}       {result['val_accuracy']:.4f}")
     
     # Print best combination
     best = all_results_sorted[0]
@@ -1049,9 +1050,10 @@ def main():
     if best.get('ablated_sensors'):
         print(f"  Ablated: {', '.join(best['ablated_sensors'])}")
     print(f"  Test F1 (macro): {best['test_f1_macro']:.4f}")
-    print(f"  Val F1 (macro): {best['val_f1_macro']:.4f}")
+    print(f"  Test Accuracy:   {best['test_accuracy']:.4f}")
+    print(f"  Val F1 (macro):  {best['val_f1_macro']:.4f}")
     print(f"  Test Loss: {best['test_loss']:.4f}")
-    print(f"  Val Loss: {best['val_loss']:.4f}")
+    print(f"  Val Loss:  {best['val_loss']:.4f}")
     print(f"{'='*70}")
     
     # Save summary report
@@ -1080,14 +1082,14 @@ def main():
         f.write("="*total_width + "\n")
         f.write("RESULTS RANKED BY TEST F1 (MACRO)\n")
         f.write("="*total_width + "\n")
-        f.write(f"{'Rank':<{rank_width}} {'Sensors':<{sensors_width}} {'Ablated':<{ablated_width}} {'Test F1':<{test_f1_width}} {'Test Loss':<{test_loss_width}} {'Val Acc':<{val_acc_width}}\n")
+        f.write(f"{'Rank':<{rank_width}} {'Sensors':<{sensors_width}} {'Ablated':<{ablated_width}} {'Test F1':<{test_f1_width}} {'Test Acc':<{test_acc_width}} {'Test Loss':<{test_loss_width}} {'Val Acc':<{val_acc_width}}\n")
         f.write("-"*total_width + "\n")
         
         for rank, result in enumerate(all_results_sorted, 1):
             sensors_str = ", ".join(result["sensors"])
             ablated_str = ", ".join(result.get("ablated_sensors", []))
             f.write(f"{rank:<{rank_width}} {sensors_str:<{sensors_width}} {ablated_str:<{ablated_width}} {result['test_f1_macro']:.4f}      "
-                    f"{result['test_loss']:.4f}       {result['val_accuracy']:.4f}\n")
+                    f"{result['test_accuracy']:.4f}     {result['test_loss']:.4f}       {result['val_accuracy']:.4f}\n")
         
         f.write("\n" + "="*70 + "\n")
         f.write("BEST COMBINATION\n")
@@ -1096,9 +1098,10 @@ def main():
         if best.get('ablated_sensors'):
             f.write(f"  Ablated: {', '.join(best['ablated_sensors'])}\n")
         f.write(f"  Test F1 (macro): {best['test_f1_macro']:.4f}\n")
-        f.write(f"  Val F1 (macro): {best['val_f1_macro']:.4f}\n")
+        f.write(f"  Test Accuracy:   {best['test_accuracy']:.4f}\n")
+        f.write(f"  Val F1 (macro):  {best['val_f1_macro']:.4f}\n")
         f.write(f"  Test Loss: {best['test_loss']:.4f}\n")
-        f.write(f"  Val Loss: {best['val_loss']:.4f}\n")
+        f.write(f"  Val Loss:  {best['val_loss']:.4f}\n")
     
     print(f"\n✓ Summary report saved to: {report_file}")
 
