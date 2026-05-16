@@ -64,7 +64,7 @@ WINDOW_SEC = 4.0        # window length in seconds
 STRIDE_SEC = 4.0        # stride in seconds
 AUG_SIZE = 1            # number of augmented copies per window
 NOISE_LEVEL = 0.01      # augmentation noise level (NOT tremor)
-AWGN_ALPHA = 0.20       # AWGN corruption alpha (0 = no noise, 0.20 → ~14 dB SNR)
+AWGN_ALPHA = 0.10       # AWGN corruption alpha (0 = no noise, 0.20 → ~14 dB SNR)
 AWGN_SEED  = 99         # RNG seed for AWGN (separate from augmentation seed)
 NUM_SUBJECTS = 10
 

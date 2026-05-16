@@ -16,7 +16,9 @@ from pathlib import Path
 
 #clean
 dataset_config = "s4_w4"
-variant_name   = "s4_w4_fs50_tremor_clean"   # bytt for hver korrupt variant
+#variant_name   = "s4_w4_fs50_tremor_clean_awgn_a010"   # bytt for hver korrupt variant
+#variant_name   = "s4_w4_fs50_tremor_mild_mod_awgn_a010"
+variant_name   = "s4_w4_fs50_tremor_mod_severe_awgn_a010"
 model_variant  = "fs50_tremor_clean"
 
 seq_len = 200                       # Must match model training AND data FS! (50 Hz × 4s)

@@ -45,7 +45,7 @@ from typing import List, Dict, Tuple, Optional
 # -------------------------------
 # Reproducibility
 # -------------------------------
-SEED = 45
+SEED = 30
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
@@ -94,17 +94,12 @@ base_data_dir = Path(__file__).parents[3] / "data" / "Tremor_datagenerator_files
 
 #clean:
 tremor_variants = ["s4_w4_fs50_tremor_clean"]  # clean 
-ABLATION_REPORT_TAG = "sanity_clean_train_clean_copy_test"
+ABLATION_REPORT_TAG = "clean_train_awgn_a010"
 embeddings_folder_name = "ExtractedFeatures_clean"  # Folder name where CNN embeddings are stored (train/val)
 
 
 # Corrupt variant used ONLY for test evaluation (train/val still use tremor_variants above)
-# Change this to test robustness against different corruption types:
-#   "s4_w4_fs50_corrupt_awgn", "s4_w4_fs50_corrupt_dropout", "s4_w4_fs50_corrupt_weak_signal",
-#   "s4_w4_fs50_corrupt_timeshift", "s4_w4_fs50_corrupt_rotation",
-#   "s4_w4_fs50_corrupt_all_no_dropout", "s4_w4_fs50_corrupt_awgn_weak", "s4_w4_fs50_corrupt_awgn_timeshift"
-#   "s4_w4_fs50_awgn_a100" → ALPHA=0.1 AWGN (std-based, ~20 dB SNR)
-corrupt_test_variant = "s4_w4_fs50_tremor_clean_copy"   # fallback for sensors not in corrupt_test_mix
+corrupt_test_variant = "s4_w4_fs50_tremor_clean_awgn_a010"   # fallback for sensors not in corrupt_test_mix
 
 # Per-sensor test distribution — overrides corrupt_test_variant for listed sensors.
 # Format: {sensor_name: {variant_name: probability}}  — probabilities must sum to 1.0 per sensor.
