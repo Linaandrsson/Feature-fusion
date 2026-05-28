@@ -67,24 +67,42 @@ class IMUCNN(nn.Module):
     Architecture is inferred from the checkpoint via build_model_from_ckpt().
     ch1 / ch2 are the out-channels of the 1st and 2nd Conv1d blocks.
     has_bn_embed adds a BatchNorm after fc_embed (used by the ECG model).
+    use_gap=True  -> new architecture: AdaptiveAvgPool1d(1), flattened_dim=ch2
+    use_gap=False -> old architecture: MaxPool1d(2)x2,      flattened_dim=(seq_len//4)*ch2
     """
     def __init__(self, num_classes: int, seq_len: int, num_channels: int,
-                 ch1: int = 128, ch2: int = 128, has_bn_embed: bool = False):
+                 ch1: int = 128, ch2: int = 128, has_bn_embed: bool = False,
+                 use_gap: bool = False):
         super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv1d(num_channels, ch1, kernel_size=5, padding=2),
-            nn.BatchNorm1d(ch1),
-            nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Dropout(0.2),
+        if use_gap:
+            self.features = nn.Sequential(
+                nn.Conv1d(num_channels, ch1, kernel_size=5, padding=2),
+                nn.BatchNorm1d(ch1),
+                nn.ReLU(),
+                nn.Dropout(0.4),
 
-            nn.Conv1d(ch1, ch2, kernel_size=5, padding=2),
-            nn.BatchNorm1d(ch2),
-            nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Dropout(0.3),
-        )
-        self.flattened_dim = (seq_len // 4) * ch2
+                nn.Conv1d(ch1, ch2, kernel_size=5, padding=2),
+                nn.BatchNorm1d(ch2),
+                nn.ReLU(),
+                nn.AdaptiveAvgPool1d(1),
+                nn.Dropout(0.3),
+            )
+            self.flattened_dim = ch2
+        else:
+            self.features = nn.Sequential(
+                nn.Conv1d(num_channels, ch1, kernel_size=5, padding=2),
+                nn.BatchNorm1d(ch1),
+                nn.ReLU(),
+                nn.MaxPool1d(2),
+                nn.Dropout(0.2),
+
+                nn.Conv1d(ch1, ch2, kernel_size=5, padding=2),
+                nn.BatchNorm1d(ch2),
+                nn.ReLU(),
+                nn.MaxPool1d(2),
+                nn.Dropout(0.3),
+            )
+            self.flattened_dim = (seq_len // 4) * ch2
         self.flatten = nn.Flatten()
         self.fc_embed = nn.Linear(self.flattened_dim, 128)
         self.has_bn_embed = has_bn_embed
@@ -108,13 +126,19 @@ class IMUCNN(nn.Module):
 
 
 def build_model_from_ckpt(ckpt: dict, num_channels: int, seq_len: int, num_classes: int) -> "IMUCNN":
-    """Instantiate IMUCNN with the architecture inferred from a checkpoint's state_dict."""
+    """Instantiate IMUCNN with the architecture inferred from a checkpoint's state_dict.
+
+    New arch (AdaptiveAvgPool): Conv2 is at features.4  (Dropout at 3, no MaxPool)
+    Old arch (MaxPool x2):      Conv2 is at features.5  (MaxPool at 3, Dropout at 4)
+    """
     sd = ckpt["model_state_dict"]
     ch1 = sd["features.0.weight"].shape[0]
-    ch2 = sd["features.5.weight"].shape[0]
+    use_gap = "features.4.weight" in sd   # new arch; old arch has Conv2 at index 5
+    ch2_key = "features.4.weight" if use_gap else "features.5.weight"
+    ch2 = sd[ch2_key].shape[0]
     has_bn_embed = "bn_embed.weight" in sd
     return IMUCNN(num_classes=num_classes, seq_len=seq_len, num_channels=num_channels,
-                  ch1=ch1, ch2=ch2, has_bn_embed=has_bn_embed)
+                  ch1=ch1, ch2=ch2, has_bn_embed=has_bn_embed, use_gap=use_gap)
 
 
 def load_data(sensor_name: str, num_channels: int):

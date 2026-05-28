@@ -129,11 +129,10 @@ print(f"\nPlot saved to: {plot_file1}")
 plt.show()
 
 # Create visualizations - Figure 2: Subject overview
-fig = plt.figure(figsize=(18, 7))
-gs = fig.add_gridspec(1, 3, width_ratios=[2, 2, 1])
+fig = plt.figure(figsize=(14, 6))
+gs = fig.add_gridspec(1, 2, width_ratios=[2, 2])
 ax1 = fig.add_subplot(gs[0])
 ax2 = fig.add_subplot(gs[1])
-ax3 = fig.add_subplot(gs[2])
 
 # Heatmap: Samples per subject and activity
 heatmap_data = []
@@ -167,26 +166,18 @@ for i in range(10):
 
 # Bar chart: Total samples per subject
 totals = summary_subject["Total"].values
-subject_colors = plt.cm.viridis(np.linspace(0, 1, 10))
-
-ax2.barh(range(1, 11), totals, color=subject_colors, edgecolor='black')
-ax2.set_ylabel("Subject", fontsize=12)
-ax2.set_xlabel("Total Number of Samples", fontsize=12)
+subject_labels = [f"S{i}" for i in range(1, 11)]
+ax2.bar(range(1, 11), totals, color="#4C72B0", edgecolor='black')
+ax2.set_xlabel("Subject", fontsize=12)
+ax2.set_ylabel("Total Number of Samples", fontsize=12)
 ax2.set_title("Total Samples per Subject", fontsize=14, fontweight='bold')
-ax2.set_yticks(range(1, 11))
-ax2.set_yticklabels([f"S{i}" for i in range(1, 11)])
-ax2.grid(axis='x', alpha=0.3)
+ax2.set_xticks(range(1, 11))
+ax2.set_xticklabels(subject_labels)
+ax2.grid(axis='y', alpha=0.3)
 
 # Add value labels on bars
 for i, v in enumerate(totals):
-    ax2.text(v + 200, i + 1, str(v), va='center', fontsize=9)
-
-# Activity legend
-ax3.axis('off')
-ax3.set_title("Activity Labels", fontsize=12, fontweight='bold', pad=20)
-legend_text = "\n".join([f"L{i}: {activity_names[i]}" for i in range(1, 13)])
-ax3.text(0.1, 0.5, legend_text, fontsize=10, verticalalignment='center',
-         family='monospace', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+    ax2.text(i + 1, v + 50, str(v), ha='center', va='bottom', fontsize=9)
 
 plt.tight_layout()
 plot_file2 = output_dir / "subject_overview.png"

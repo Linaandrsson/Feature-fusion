@@ -10,7 +10,7 @@ workspace_root = script_dir.parent.parent.parent  # Go up to workspace root (Tra
 
 # ========================= CHANGE THESE ===========================
 # Dataset configuration - Using Tremor data with all 3 augmentations combined
-dataset_config = "s4_w4_mixed"
+dataset_config = "s4_w4"
 
 # Variant names to combine (all 3 Parkinson tremor augmentations)
 # Format: s{STRIDE}_w{WINDOW}_fs{FS}_tremor_{AUGMENT_MODE}
@@ -50,7 +50,7 @@ models_output_dir.mkdir(parents=True, exist_ok=True)
 # Where to save embeddings/extracted features
 # Default: Save to each variant's folder in Tremor_datagenerator_files
 embeddings_base_dir = parent_dir  # Same as data location (Tremor_datagenerator_files)
-embeddings_folder_name = "Activity_ExtractedFeatures"  # Folder name within each variant directory
+embeddings_folder_name = "ExtractedFeatures_mixed"  # Folder name within each variant directory
 
 # To save embeddings elsewhere, uncomment and modify:
 # embeddings_base_dir = workspace_root / "path" / "to" / "custom" / "location"

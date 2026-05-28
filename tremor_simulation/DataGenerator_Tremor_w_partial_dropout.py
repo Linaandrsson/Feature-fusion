@@ -1,19 +1,19 @@
 """
-Data Generator for Tremor-Labeled Datasets
-===========================================
+Data Generator for Tremor-Labeled Datasets — with Partial Signal Loss
+======================================================================
 
-This script generates datasets with Parkinson's tremor using two sampling methods:
+Identical to DataGenerator_Tremor_w_awgn.py except that the global
+corruption applied to every sensor window is **partial dropout** instead
+of AWGN.
 
-1. SUBJECT-based (default): Each subject has fixed tremor characteristics
-   - Uses A_SUBJECT dict for baseline severity
-   - Uses FREQ_TREMOR dict for subject-specific frequency
-   - Modulated by body_part, activity, and jitter
-   - Realistic for patient-specific studies
+Partial dropout: a single contiguous temporal segment of length
+  seg_len = round(L * DROPOUT_FRACTION)   (default 10 % of the window)
+is randomly placed within each window and zeroed out (all channels).
 
-2. INTERVAL-based: Samples tremor parameters independently per window
-   - Samples from severity ranges (SCORE_RMS_RANGE)
-   - Random frequency per window (FREQ_RANGE_HZ)
-   - High variability, suited for augmentation studies
+This models temporary signal degradation scenarios such as packet loss,
+wireless communication instability and intermittent sensor disconnections.
+
+Sampling methods and tremor generation are unchanged from the AWGN variant.
 
 Each window is labeled with:
   - tremor_freq: Tremor frequency (Hz)
@@ -64,8 +64,8 @@ WINDOW_SEC = 4.0        # window length in seconds
 STRIDE_SEC = 4.0        # stride in seconds
 AUG_SIZE = 1            # number of augmented copies per window
 NOISE_LEVEL = 0.01      # augmentation noise level (NOT tremor)
-AWGN_ALPHA = 0.20       # AWGN corruption alpha (0 = no noise, 0.20 → ~14 dB SNR)
-AWGN_SEED  = 99         # RNG seed for AWGN (separate from augmentation seed)
+DROPOUT_FRACTION = 0.10 # fraction of each window length to zero out (10 %)
+DROPOUT_SEED = 99       # RNG seed for dropout (separate from augmentation seed)
 NUM_SUBJECTS = 10
 
 # Dataset location
@@ -246,32 +246,45 @@ def apply_rotation_augmentation(win_raw: np.ndarray, rng: np.random.Generator, m
 def apply_awgn_raw(win_raw: np.ndarray, rng: np.random.Generator, rms_ratio: float = 0.2) -> np.ndarray:
     """
     Apply AWGN to raw sensor signal with noise level relative to signal RMS.
-    
-    Args:
-        win_raw: Raw input window of shape (L, C) BEFORE preprocessing
-        rng: Random number generator
-        rms_ratio: Noise RMS as a fraction of signal RMS per channel (default 0.2 = 20%)
-        
-    Returns:
-        Corrupted window with same shape (L, C)
-        
-    Note:
-        Applied BEFORE resampling and z-score normalization.
+    Used internally for tremor-free sensor augmentation (unchanged from AWGN variant).
     """
     L, C = win_raw.shape
     noise = np.zeros_like(win_raw)
-    
-    # Add noise independently per channel
     for c in range(C):
         signal_rms = np.sqrt(np.mean(win_raw[:, c]**2))
-        # Avoid division by zero for flat signals
         if signal_rms < 1e-8:
             signal_rms = 1.0
-        
-        noise_std = rms_ratio * signal_rms
-        noise[:, c] = rng.normal(0, noise_std, size=L)
-    
+        noise[:, c] = rng.normal(0, rms_ratio * signal_rms, size=L)
     return win_raw + noise
+
+
+def apply_partial_dropout(win_raw: np.ndarray, rng: np.random.Generator, fraction: float = 0.10) -> np.ndarray:
+    """
+    Apply partial signal loss by zeroing a random contiguous temporal segment.
+
+    A single contiguous segment of length ``seg_len = round(L * fraction)``
+    is selected at a uniformly random start position and set to zero across
+    all channels.  The rest of the window is unchanged.
+
+    Args:
+        win_raw:  Raw input window of shape (L, C) BEFORE preprocessing.
+        rng:      Random number generator.
+        fraction: Fraction of the window length to mask (default 0.10 = 10 %).
+
+    Returns:
+        Corrupted window with the same shape (L, C).
+
+    Note:
+        Applied AFTER resampling and BEFORE z-score normalization.
+    """
+    L, C = win_raw.shape
+    seg_len = max(1, int(round(L * fraction)))
+    # Ensure start position keeps the segment within the window
+    max_start = L - seg_len
+    start = int(rng.integers(0, max_start + 1))
+    out = win_raw.copy()
+    out[start:start + seg_len, :] = 0.0
+    return out
 
 
 def load_subject_data_with_retry(file_path: Path, max_retries: int = 5, delay: float = 2.0) -> np.ndarray:
@@ -615,14 +628,15 @@ def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list,
 # Main Processing
 # ============================================================
 
-def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_alpha: float = 0.0):
+def generate_tremor_dataset(variant_name: str, augment_mode: str = None, dropout_fraction: float = 0.0):
     """
     Generate dataset with tremor labels.
-    
+
     Args:
-        variant_name: Name for this dataset variant (e.g., "s2_w2_fs50_tremor_clean")
-        augment_mode: Tremor augmentation mode ("clean", "mild_mod", "mod_severe")
-                     If None, uses pk_config.DEFAULT_AUGMENT_MODE
+        variant_name:      Name for this dataset variant.
+        augment_mode:      Tremor augmentation mode ("clean", "mild_mod", "mod_severe").
+                           If None, uses pk_config.DEFAULT_AUGMENT_MODE.
+        dropout_fraction:  Fraction of each window to zero out (0 = disabled).
     """
     
     # Use provided augment_mode or fall back to config default
@@ -759,8 +773,8 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
     print("STEP 3: Processing sensors and applying tremor...")
     print("=" * 80)
     
-    aug_rng  = np.random.default_rng(SEED)
-    awgn_rng = np.random.default_rng(AWGN_SEED)
+    aug_rng      = np.random.default_rng(SEED)
+    dropout_rng  = np.random.default_rng(DROPOUT_SEED)
     target_window_len = int(round(WINDOW_SEC * FS))
     
     for sensor_name, cols in SENSORS.items():
@@ -875,14 +889,14 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
             # Apply rotation augmentation if applicable (before resampling)
             if apply_rotation_aug:
                 win_raw = apply_rotation_augmentation(win_raw, aug_rng, max_angle_deg=10.0)
-            
-            # Apply global AWGN corruption (all sensors, raw domain before resampling)
-            if awgn_alpha > 0:
-                win_raw = apply_awgn_raw(win_raw, awgn_rng, rms_ratio=awgn_alpha)
-            
+
             # Resample
             win_resampled = resample_window(win_raw, ORIGINAL_FS, FS)
-            
+
+            # Apply global partial dropout corruption (after resampling, before z-score)
+            if dropout_fraction > 0:
+                win_resampled = apply_partial_dropout(win_resampled, dropout_rng, fraction=dropout_fraction)
+
             # Z-score normalize
             win = zscore_window(win_resampled)
             
@@ -1168,6 +1182,8 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
         f"  - Augmentation copies (AUG_SIZE): {AUG_SIZE}",
         f"  - Augmentation noise level: {NOISE_LEVEL}",
         f"  - Augmentation seed: {SEED}",
+        f"  - Partial dropout fraction: {dropout_fraction:.2f} ({int(round(dropout_fraction * target_window_len))} samples)",
+        f"  - Dropout seed: {DROPOUT_SEED}",
         "",
         "=" * 80,
         "Tremor Configuration:",
@@ -1300,40 +1316,41 @@ if __name__ == "__main__":
     fs_str = f"fs{int(FS)}"
     base_name = f"s{int(STRIDE_SEC)}_w{int(WINDOW_SEC)}_{fs_str}_tremor"
     
+    dropout_suffix = f"_dropout_p{int(round(DROPOUT_FRACTION * 100)):03d}" if DROPOUT_FRACTION > 0 else ""
+
     if GENERATE_TREMOR:
         # Generate all three tremor variants in one run
         augment_modes = ["clean", "mild_mod", "mod_severe"]
         total_variants = len(augment_modes)
-        
+
         print("\n" + "="*80)
-        print(f"🔄 GENERATING {total_variants} TREMOR VARIANTS")
+        print(f"GENERATING {total_variants} TREMOR VARIANTS (partial dropout)")
         print("="*80)
-        print(f"Base name: {base_name}_[mode]")
+        print(f"Base name: {base_name}_[mode]{dropout_suffix}")
         print(f"Variants: {', '.join(augment_modes)}")
+        print(f"Dropout fraction: {DROPOUT_FRACTION:.2f}")
         print("="*80 + "\n")
-        
+
         for idx, mode in enumerate(augment_modes, 1):
             print("\n" + "#"*80)
             print(f"#  VARIANT {idx}/{total_variants}: {mode.upper()}")
             print("#"*80 + "\n")
-            
-            awgn_suffix = f"_awgn_a{int(round(AWGN_ALPHA * 100)):03d}" if AWGN_ALPHA > 0 else ""
-            variant_name = f"{base_name}_{mode}{awgn_suffix}"
-            generate_tremor_dataset(variant_name, augment_mode=mode, awgn_alpha=AWGN_ALPHA)
-            
+
+            variant_name = f"{base_name}_{mode}{dropout_suffix}"
+            generate_tremor_dataset(variant_name, augment_mode=mode, dropout_fraction=DROPOUT_FRACTION)
+
             print("\n" + "#"*80)
-            print(f"#  ✓ COMPLETED VARIANT {idx}/{total_variants}: {mode.upper()}")
+            print(f"#  COMPLETED VARIANT {idx}/{total_variants}: {mode.upper()}")
             print("#"*80 + "\n")
-        
+
         print("\n" + "="*80)
-        print(f"✅ ALL {total_variants} TREMOR VARIANTS GENERATED SUCCESSFULLY")
+        print(f"ALL {total_variants} TREMOR VARIANTS GENERATED SUCCESSFULLY")
         print("="*80)
         print("Generated variants:")
         for mode in augment_modes:
-            print(f"  ✓ {base_name}_{mode}")
+            print(f"  {base_name}_{mode}{dropout_suffix}")
         print("="*80 + "\n")
     else:
         # Generate only clean dataset (no tremor)
-        awgn_suffix = f"_awgn_a{int(round(AWGN_ALPHA * 100)):03d}" if AWGN_ALPHA > 0 else ""
-        variant_name = f"{base_name}_clean{awgn_suffix}"
-        generate_tremor_dataset(variant_name, augment_mode="clean", awgn_alpha=AWGN_ALPHA)
+        variant_name = f"{base_name}_clean{dropout_suffix}"
+        generate_tremor_dataset(variant_name, augment_mode="clean", dropout_fraction=DROPOUT_FRACTION)

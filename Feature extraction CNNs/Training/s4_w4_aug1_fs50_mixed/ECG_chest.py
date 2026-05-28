@@ -131,17 +131,16 @@ class ECGCNN(nn.Module):
             nn.Conv1d(num_channels, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.MaxPool1d(2),
             nn.Dropout(0.4),  # Increased dropout
 
             nn.Conv1d(128, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.MaxPool1d(2),
+            nn.AdaptiveAvgPool1d(1),
             nn.Dropout(0.4),  # Increased dropout
         )
 
-        self.flattened_dim = (seq_len // 4) * 128
+        self.flattened_dim = 128  # AdaptiveAvgPool1d(1) -> (batch, 128, 1) -> flatten -> 128
 
         # Embedding layer with BatchNorm for better generalization
         self.flatten = nn.Flatten()

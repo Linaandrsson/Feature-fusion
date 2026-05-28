@@ -45,7 +45,7 @@ from typing import List, Dict, Tuple, Optional
 # -------------------------------
 # Reproducibility
 # -------------------------------
-SEED = 30
+SEED = 39
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
@@ -88,19 +88,36 @@ base_data_dir = Path(__file__).parents[3] / "data" / "Tremor_datagenerator_files
 # If empty, folder stays "ablation_reports".
 
 #mixed:
-# tremor_variants = ["s4_w4_fs50_tremor_clean","s4_w4_fs50_tremor_mild_mod", "s4_w4_fs50_tremor_mod_severe"]  # mixed 
-# ABLATION_REPORT_TAG = "mixed_on_100awgn20db"
-# embeddings_folder_name = "ExtractedFeatures_mixed"  # Folder name where CNN embeddings are stored (train/val)
+tremor_variants = ["s4_w4_fs50_tremor_clean", "s4_w4_fs50_tremor_mild_mod", "s4_w4_fs50_tremor_mod_severe"]  # mixed 
+ABLATION_REPORT_TAG = "mixed_k4_mixed_test_accAnkle_fullDropout"
+embeddings_folder_name = "ExtractedFeatures_mixed"  # Folder name where CNN embeddings are stored (train/val)
 
 #clean:
-tremor_variants = ["s4_w4_fs50_tremor_clean"]  # clean 
-ABLATION_REPORT_TAG = "clean_train_awgn_a010"
-embeddings_folder_name = "ExtractedFeatures_clean"  # Folder name where CNN embeddings are stored (train/val)
+# tremor_variants = ["s4_w4_fs50_tremor_clean"]  # clean 
+# ABLATION_REPORT_TAG = "clean_k4_magArm_fullDropout"
+# embeddings_folder_name = "ExtractedFeatures_clean"  # Folder name where CNN embeddings are stored (train/val)
 
 
-# Corrupt variant used ONLY for test evaluation (train/val still use tremor_variants above)
-corrupt_test_variant = "s4_w4_fs50_tremor_clean_awgn_a010"   # fallback for sensors not in corrupt_test_mix
+# Corrupt variant(s) used ONLY for test evaluation (train/val still use tremor_variants above).
+# Can be a single string or a list of strings. If a list, equal weight is given to each variant.
+# corrupt_test_mix (below) overrides this per sensor.
+# corrupt_test_variant = [
+#     "s4_w4_fs50_tremor_clean",
+#     "s4_w4_fs50_tremor_mild_mod",
+#     "s4_w4_fs50_tremor_mod_severe",
+# ]  # mixed tremor test set
 
+# clean single-variant examples:
+# corrupt_test_variant = "s4_w4_fs50_tremor_clean_awgn_a000"
+# corrupt_test_variant = ["s4_w4_fs50_tremor_clean_awgn_a000"]
+
+# fallback used when a sensor is NOT listed in corrupt_test_mix below
+# (currently unused — all sensors are covered by corrupt_test_mix)
+# corrupt_test_variant = "s4_w4_fs50_tremor_clean"
+
+corrupt_test_variant = ["s4_w4_fs50_tremor_clean", "s4_w4_fs50_tremor_mild_mod", "s4_w4_fs50_tremor_mod_severe"]  # mixed tremor test set
+
+# fallback for sensors not in corrupt_test_mix
 # Per-sensor test distribution — overrides corrupt_test_variant for listed sensors.
 # Format: {sensor_name: {variant_name: probability}}  — probabilities must sum to 1.0 per sensor.
 #
@@ -111,8 +128,15 @@ corrupt_test_variant = "s4_w4_fs50_tremor_clean_awgn_a010"   # fallback for sens
 #   "Acc_ankle": {"s4_w4_fs50_tremor_clean": 1.0}                                    → 100 % clean
 #   "Acc_arm":   {"s4_w4_fs50_corrupt_awgn": 0.8, "s4_w4_fs50_corrupt_dropout": 0.2} → mixed
 #
+
+# Available sensors (ablation will test subsets of these)
+ALL_SENSORS = ["Acc_ankle", "Acc_arm", "Mag_ankle", "Mag_arm"]
+
+corrupt_test_mix: Dict[str, Dict[str, float]] = {
+    "Acc_ankle":  {"s4_w4_fs50_tremor_clean_fullDrop": 1},
+}
 # Leave the dict empty {} to use corrupt_test_variant (100 %) for all sensors.
-corrupt_test_mix: Dict[str, Dict[str, float]] = {}
+#corrupt_test_mix: Dict[str, Dict[str, float]] = {}
 # corrupt_test_mix: Dict[str, Dict[str, float]] = {
 #     "Acc_ankle":  {"s4_w4_fs50_tremor_clean": 0.50, "s4_w4_fs50_corrupt_awgn":     0.40, "s4_w4_fs50_corrupt_dropout": 0.10},
 #     "Acc_arm":    {"s4_w4_fs50_tremor_clean": 0.50, "s4_w4_fs50_corrupt_awgn":     0.40, "s4_w4_fs50_corrupt_dropout": 0.10},
@@ -124,8 +148,18 @@ corrupt_test_mix: Dict[str, Dict[str, float]] = {}
 #     "Mag_arm":    {"s4_w4_fs50_tremor_clean": 0.50, "s4_w4_fs50_corrupt_awgn":     0.40, "s4_w4_fs50_corrupt_dropout": 0.10},
 # }
 
-# Available sensors (ablation will test subsets of these)
-ALL_SENSORS = ["Acc_ankle", "Acc_arm", "Gyro_ankle", "Gyro_arm", "Mag_ankle", "Mag_arm", "Acc_chest", "ECG"]
+
+# corrupt_test_mix: Dict[str, Dict[str, float]] = {
+#     "Acc_ankle":  {"s4_w4_fs50_tremor_clean_awgn_a000": 0.25, "s4_w4_fs50_tremor_clean_awgn_a018": 0.25, "s4_w4_fs50_tremor_clean_dropout_p010": 0.25, "s4_w4_fs50_tremor_clean_orient_r045": 0.25},
+#     "Acc_arm":    {"s4_w4_fs50_tremor_clean_awgn_a000": 0.25, "s4_w4_fs50_tremor_clean_awgn_a018": 0.25, "s4_w4_fs50_tremor_clean_dropout_p010": 0.25, "s4_w4_fs50_tremor_clean_orient_r045": 0.25},
+#     "Gyro_ankle": {"s4_w4_fs50_tremor_clean_awgn_a000": 0.25, "s4_w4_fs50_tremor_clean_awgn_a018": 0.25, "s4_w4_fs50_tremor_clean_dropout_p010": 0.25, "s4_w4_fs50_tremor_clean_orient_r045": 0.25},
+#     "Gyro_arm":   {"s4_w4_fs50_tremor_clean_awgn_a000": 0.25, "s4_w4_fs50_tremor_clean_awgn_a018": 0.25, "s4_w4_fs50_tremor_clean_dropout_p010": 0.25, "s4_w4_fs50_tremor_clean_orient_r045": 0.25},
+#     "Mag_ankle":  {"s4_w4_fs50_tremor_clean_awgn_a000": 0.25, "s4_w4_fs50_tremor_clean_awgn_a018": 0.25, "s4_w4_fs50_tremor_clean_dropout_p010": 0.25, "s4_w4_fs50_tremor_clean_orient_r045": 0.25},
+#     "Mag_arm":    {"s4_w4_fs50_tremor_clean_awgn_a000": 0.25, "s4_w4_fs50_tremor_clean_awgn_a018": 0.25, "s4_w4_fs50_tremor_clean_dropout_p010": 0.25, "s4_w4_fs50_tremor_clean_orient_r045": 0.25},
+#     "Acc_chest":  {"s4_w4_fs50_tremor_clean_awgn_a000": 0.25, "s4_w4_fs50_tremor_clean_awgn_a018": 0.25, "s4_w4_fs50_tremor_clean_dropout_p010": 0.25, "s4_w4_fs50_tremor_clean_orient_r045": 0.25},
+#     "ECG":        {"s4_w4_fs50_tremor_clean_awgn_a000": 0.25, "s4_w4_fs50_tremor_clean_awgn_a018": 0.25, "s4_w4_fs50_tremor_clean_dropout_p010": 0.25, "s4_w4_fs50_tremor_clean_orient_r045": 0.25},
+# }
+
 # Subject-based splits (to prevent data leakage)
 TEST_SUBJECTS = [5, 10]
 VAL_SUBJECTS = [2, 7]
@@ -134,7 +168,7 @@ VAL_SUBJECTS = [2, 7]
 # -------------------------------
 # Sensor Ablation Configuration
 # -------------------------------
-ABLATION_K = [8]  # List of subset sizes to test (e.g., [2, 3] tests all 2-sensor and 3-sensor combos)
+ABLATION_K = [4]  # List of subset sizes to test (e.g., [2, 3] tests all 2-sensor and 3-sensor combos)
                      # [8] = full 8-sensor set only; expand to [1,2,...,8] for full ablation sweep
 
 print(f"\nUsing tremor variants as augmentations:")
@@ -326,14 +360,19 @@ def load_mixed_corrupt_test_embeddings(sensor_name: str, rng: np.random.Generato
     Load test-split embeddings for one sensor with optional per-window variant mixing.
 
     Resolves the mix from corrupt_test_mix[sensor_name] if defined,
-    otherwise falls back to {corrupt_test_variant: 1.0}.
+    otherwise falls back to corrupt_test_variant (equal weight if a list).
     Per-window variant selection is drawn from `rng` (seeded for reproducibility).
 
     If variants have different window counts for the same subject, they are aligned
     subject-wise: for each subject only the first min(count_across_variants) windows
     are kept. Surplus windows are skipped and reported via the returned 'skipped' key.
     """
-    mix: Dict[str, float] = (corrupt_test_mix.get(sensor_name) or {}) or {corrupt_test_variant: 1.0}
+    _ctv = corrupt_test_variant
+    if isinstance(_ctv, str):
+        _fallback: Dict[str, float] = {_ctv: 1.0}
+    else:
+        _fallback = {v: 1.0 / len(_ctv) for v in _ctv}
+    mix: Dict[str, float] = (corrupt_test_mix.get(sensor_name) or {}) or _fallback
 
     total_p = sum(mix.values())
     if abs(total_p - 1.0) > 1e-5:
@@ -822,7 +861,10 @@ def train_sensor_combination(
         "tremor_variants": tremor_variants,
         "corrupt_test_variant": corrupt_test_variant,
         "corrupt_test_mix": {
-            s: (corrupt_test_mix.get(s) or {corrupt_test_variant: 1.0})
+            s: (corrupt_test_mix.get(s) or (
+                {corrupt_test_variant: 1.0} if isinstance(corrupt_test_variant, str)
+                else {v: 1.0 / len(corrupt_test_variant) for v in corrupt_test_variant}
+            ))
             for s in sensors
         },
     }
@@ -1069,7 +1111,9 @@ def main():
         f.write(f"Corrupt test variant (fallback): {corrupt_test_variant}\n")
         f.write(f"\nPer-sensor test mix:\n")
         for s in ALL_SENSORS:
-            mix_s = corrupt_test_mix.get(s) or {corrupt_test_variant: 1.0}
+            _ctv = corrupt_test_variant
+            _fb = {_ctv: 1.0} if isinstance(_ctv, str) else {v: 1.0/len(_ctv) for v in _ctv}
+            mix_s = corrupt_test_mix.get(s) or _fb
             mix_str = ", ".join(f"{v}: {p:.2f}" for v, p in mix_s.items())
             f.write(f"  {s:<15}: {mix_str}\n")
         f.write(f"\nSubject splits: TEST=[5,10], VAL=[2,7], TRAIN=[1,3,4,6,8,9]\n\n")

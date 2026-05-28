@@ -1,19 +1,19 @@
 """
-Data Generator for Tremor-Labeled Datasets
-===========================================
+Data Generator for Tremor-Labeled Datasets — with Full Signal Dropout
+=======================================================================
 
-This script generates datasets with Parkinson's tremor using two sampling methods:
+Identical to DataGenerator_Tremor_w_partial_dropout.py except that the
+global corruption applied to every sensor window is **full dropout**
+instead of partial dropout.
 
-1. SUBJECT-based (default): Each subject has fixed tremor characteristics
-   - Uses A_SUBJECT dict for baseline severity
-   - Uses FREQ_TREMOR dict for subject-specific frequency
-   - Modulated by body_part, activity, and jitter
-   - Realistic for patient-specific studies
+Full dropout: every sample in the window is replaced with zero,
 
-2. INTERVAL-based: Samples tremor parameters independently per window
-   - Samples from severity ranges (SCORE_RMS_RANGE)
-   - Random frequency per window (FREQ_RANGE_HZ)
-   - High variability, suited for augmentation studies
+    y(t) = 0.
+
+This models complete sensor failure scenarios such as hardware failure,
+battery depletion or complete communication loss.
+
+Sampling methods and tremor generation are unchanged from the AWGN variant.
 
 Each window is labeled with:
   - tremor_freq: Tremor frequency (Hz)
@@ -64,8 +64,6 @@ WINDOW_SEC = 4.0        # window length in seconds
 STRIDE_SEC = 4.0        # stride in seconds
 AUG_SIZE = 1            # number of augmented copies per window
 NOISE_LEVEL = 0.01      # augmentation noise level (NOT tremor)
-AWGN_ALPHA = 0.20       # AWGN corruption alpha (0 = no noise, 0.20 → ~14 dB SNR)
-AWGN_SEED  = 99         # RNG seed for AWGN (separate from augmentation seed)
 NUM_SUBJECTS = 10
 
 # Dataset location
@@ -177,47 +175,41 @@ def augment_window(win: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 def generate_rotation_matrix(rng: np.random.Generator, max_angle_deg: float = 15.0) -> np.ndarray:
     """
     Generate a random 3D rotation matrix from small random orientation perturbations.
-    
+
     Args:
         rng: Random number generator
         max_angle_deg: Maximum rotation angle in degrees (default 15°)
-        
+
     Returns:
         R: 3x3 rotation matrix
-        
+
     Note:
         Rotation simulates realistic sensor orientation variations (e.g., slight
         misalignment during attachment) while preserving physical motion structure.
     """
-    # Sample random rotation angles (in radians) from uniform distribution
     max_angle_rad = np.deg2rad(max_angle_deg)
     angles = rng.uniform(-max_angle_rad, max_angle_rad, size=3)
-    
-    # Rotation matrices for each axis
+
     theta_x, theta_y, theta_z = angles
-    
-    # X-axis rotation
+
     Rx = np.array([
         [1, 0, 0],
         [0, np.cos(theta_x), -np.sin(theta_x)],
         [0, np.sin(theta_x), np.cos(theta_x)]
     ])
-    
-    # Y-axis rotation
+
     Ry = np.array([
         [np.cos(theta_y), 0, np.sin(theta_y)],
         [0, 1, 0],
         [-np.sin(theta_y), 0, np.cos(theta_y)]
     ])
-    
-    # Z-axis rotation
+
     Rz = np.array([
         [np.cos(theta_z), -np.sin(theta_z), 0],
         [np.sin(theta_z), np.cos(theta_z), 0],
         [0, 0, 1]
     ])
-    
-    # Combine rotations: R = Rz * Ry * Rx
+
     R = Rz @ Ry @ Rx
     return R
 
@@ -225,53 +217,59 @@ def generate_rotation_matrix(rng: np.random.Generator, max_angle_deg: float = 15
 def apply_rotation_augmentation(win_raw: np.ndarray, rng: np.random.Generator, max_angle_deg: float = 15.0) -> np.ndarray:
     """
     Apply rotation-based data augmentation to 3-axis sensor data.
-    
+
     Args:
         win_raw: Window of shape (L, 3) with raw sensor readings (BEFORE z-score)
         rng: Random number generator
         max_angle_deg: Maximum rotation angle in degrees
-        
+
     Returns:
         Rotated window of shape (L, 3)
-        
-    Note:
-        Rotation formula: x'(t) = R @ x(t)
-        where x(t) is the original 3D signal vector and R is a random rotation matrix.
     """
     R = generate_rotation_matrix(rng, max_angle_deg)
-    # Apply rotation: (L, 3) @ (3, 3)^T = (L, 3)
     return win_raw @ R.T
 
 
 def apply_awgn_raw(win_raw: np.ndarray, rng: np.random.Generator, rms_ratio: float = 0.2) -> np.ndarray:
     """
     Apply AWGN to raw sensor signal with noise level relative to signal RMS.
-    
+    Used for tremor-free sensor augmentation strategy.
+
     Args:
         win_raw: Raw input window of shape (L, C) BEFORE preprocessing
         rng: Random number generator
-        rms_ratio: Noise RMS as a fraction of signal RMS per channel (default 0.2 = 20%)
-        
+        rms_ratio: Noise RMS as a fraction of signal RMS per channel
+
     Returns:
         Corrupted window with same shape (L, C)
-        
-    Note:
-        Applied BEFORE resampling and z-score normalization.
     """
     L, C = win_raw.shape
     noise = np.zeros_like(win_raw)
-    
-    # Add noise independently per channel
+
     for c in range(C):
         signal_rms = np.sqrt(np.mean(win_raw[:, c]**2))
-        # Avoid division by zero for flat signals
         if signal_rms < 1e-8:
             signal_rms = 1.0
-        
         noise_std = rms_ratio * signal_rms
         noise[:, c] = rng.normal(0, noise_std, size=L)
-    
+
     return win_raw + noise
+
+
+def apply_full_dropout(win: np.ndarray) -> np.ndarray:
+    """
+    Apply full signal dropout by replacing all samples with zero.
+
+    Models complete sensor failure (hardware failure, battery depletion,
+    communication loss). Applied after resampling, before z-score normalization.
+
+    Args:
+        win: Input window of shape (L, C)
+
+    Returns:
+        Zero array of same shape (L, C)
+    """
+    return np.zeros_like(win)
 
 
 def load_subject_data_with_retry(file_path: Path, max_retries: int = 5, delay: float = 2.0) -> np.ndarray:
@@ -279,14 +277,14 @@ def load_subject_data_with_retry(file_path: Path, max_retries: int = 5, delay: f
     for attempt in range(max_retries):
         try:
             data = np.loadtxt(file_path)
-            
+
             if data.ndim == 1 or (data.ndim > 1 and data.shape[1] < 24):
                 print(f"\n{'='*60}")
                 print(f"WARNING: {file_path.name} appears to be empty or incomplete!")
                 print(f"This is likely a OneDrive sync issue.")
                 print(f"Please check that OneDrive has fully synced the file.")
                 print(f"{'='*60}\n")
-            
+
             return data
         except (TimeoutError, OSError) as e:
             if attempt < max_retries - 1:
@@ -348,38 +346,17 @@ def save_tremor_branch_sensor(
 ) -> None:
     """
     Save tremor-branch sensor data (non-normalized, for tremor severity estimation).
-    
-    This saves the same window data as HAR branch but WITHOUT z-score normalization
-    or final augmentation noise, preserving amplitude information needed for tremor
-    severity estimation.
-    
+
     Pipeline for tremor-branch data:
       1. Extract raw window
       2. Apply tremor/augmentation (same as HAR)
       3. Resample to target FS (same as HAR)
-      4. SKIP z-score normalization (DIFFERENT from HAR)
-      5. SKIP augment_window noise (DIFFERENT from HAR)
-      
-    Args:
-        variant_dir: Output directory
-        sensor_name: Base sensor name (e.g., "Acc_arm")
-        X: (N, C, L) array of sensor data (NOT normalized)
-        y: (N,) activity labels
-        subject_ids: (N,) subject IDs
-        base_window_idx: (N,) base window indices
-        tremor_freq: (N,) tremor frequencies
-        tremor_acc_rms: (N,) tremor accelerometer RMS
-        tremor_gyro_rms: (N,) tremor gyroscope RMS
-        tremor_score: (N,) tremor severity scores
-        sensor_cols: Original sensor column indices
-        fs: Sampling frequency
-        window_len: Window length in samples
-        stride: Stride in samples
+      4. Apply full dropout (same as HAR)
+      5. SKIP z-score normalization (DIFFERENT from HAR)
+      6. SKIP augment_window noise (DIFFERENT from HAR)
     """
-    # Create tremor-branch sensor name
     tremor_branch_name = f"{sensor_name}_tremorbranch"
-    
-    # Save NPZ with tremor labels
+
     npz_out = variant_dir / f"{tremor_branch_name}.npz"
     np.savez_compressed(
         npz_out,
@@ -397,25 +374,23 @@ def save_tremor_branch_sensor(
         sensor_name=tremor_branch_name,
         sensor_cols=np.array(sensor_cols, dtype=np.int64),
     )
-    
-    # Save TXT with all labels
+
     txt_out = variant_dir / f"{tremor_branch_name}.txt"
     flat_rows = flatten_channel_blocks(X)
-    
-    # Stack all labels as columns
+
     all_labels = np.column_stack([
-        (y + 1),              # Activity label (1-indexed)
-        subject_ids,          # Subject ID
-        base_window_idx,      # Base window index
-        tremor_freq,          # Tremor frequency (Hz)
-        tremor_acc_rms,       # Acc RMS (m/s²)
-        tremor_gyro_rms,      # Gyro RMS (deg/s)
-        tremor_score          # Severity score (0-4)
+        (y + 1),
+        subject_ids,
+        base_window_idx,
+        tremor_freq,
+        tremor_acc_rms,
+        tremor_gyro_rms,
+        tremor_score
     ])
-    
+
     sensor_txt = np.hstack([flat_rows, all_labels]).astype(np.float32)
     np.savetxt(txt_out, sensor_txt, delimiter=",", fmt="%.6f")
-    
+
     print(f"    ✓ Saved: {npz_out.name}, {txt_out.name} | X={X.shape}, tremor_labels={tremor_freq.shape}")
 
 
@@ -423,130 +398,109 @@ def save_tremor_branch_sensor(
 # Diagnostic Utilities
 # ============================================================
 
-def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list, 
+def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list,
                              data_loader_func, num_windows: int = 5):
     """
     Diagnostic utility to verify tremor generation pipeline.
-    
+
     Checks:
     - Rotation-based magnetometer tremor (Mag_arm, Mag_ankle)
     - Additive tremor for acc/gyro
     - Tremor-free sensor policy (Acc_chest, ECG)
     - Ankle tremor scaling
-    
-    Args:
-        tremor_cache: Pre-computed tremor cache
-        window_specs: List of (subj_idx, label, win_start, win_end)
-        data_loader_func: Function to load subject data
-        num_windows: Number of windows to inspect
     """
     print("\n" + "="*80)
     print("TREMOR PIPELINE SANITY CHECKS")
     print("="*80)
-    
-    # Sample windows for inspection
+
     sample_indices = np.linspace(0, len(window_specs)-1, num_windows, dtype=int)
-    
-    # Statistics collectors for Mag_ankle
+
     mag_ankle_stats = {
         'gyro_rms': [],
         'mag_perturbation_rms': [],
         'mag_original_norm': [],
         'mag_rotated_norm': []
     }
-    
+
     print("\n" + "-"*80)
     print("CHECKING SAMPLE WINDOWS")
     print("-"*80)
-    
+
     for idx in sample_indices:
         w_idx = int(idx)
         subj_idx, label, win_start, win_end = window_specs[w_idx]
-        
+
         print(f"\nWindow {w_idx}: Subject {subj_idx}, Activity {label}")
-        
-        # Check each body part's cache
+
         for body_part in ['arm', 'ankle', 'chest']:
             cache_entry = tremor_cache.get((w_idx, body_part))
             if cache_entry is None:
                 continue
-                
+
             meta = cache_entry['meta']
             acc_rms = meta.get('acc_target_rms', 0.0)
             gyro_rms = meta.get('gyro_target_rms', 0.0)
             freq = meta.get('freq_hz', 0.0)
-            
-            # Get tremor noise
+
             acc_noise = cache_entry['acc_noise']
             gyro_noise = cache_entry['gyro_noise']
             mag_noise = cache_entry['mag_noise']
-            
-            # Calculate RMS of noise
+
             acc_noise_rms = np.sqrt(np.mean(acc_noise**2))
             gyro_noise_rms = np.sqrt(np.mean(gyro_noise**2))
             mag_noise_rms = np.sqrt(np.mean(mag_noise**2))
-            
+
             print(f"  {body_part.upper()}: acc_target={acc_rms:.4f}, gyro_target={gyro_rms:.4f}, "
                   f"freq={freq:.2f} Hz")
             print(f"    Noise RMS: acc={acc_noise_rms:.4f}, gyro={gyro_noise_rms:.4f}, "
                   f"mag={mag_noise_rms:.4f}")
-    
-    # Detailed Mag_ankle rotation-based tremor check
+
     print("\n" + "-"*80)
     print("MAG_ANKLE ROTATION-BASED TREMOR ANALYSIS")
     print("-"*80)
-    
-    # Load subject data for detailed mag_ankle inspection
+
     data = data_loader_func(window_specs[sample_indices[0]][0])
-    
+
     for idx in sample_indices:
         w_idx = int(idx)
         subj_idx, label, win_start, win_end = window_specs[w_idx]
-        
-        # Load data if different subject
+
         if subj_idx != window_specs[sample_indices[0]][0]:
             data = data_loader_func(subj_idx)
-        
+
         ankle_cache = tremor_cache.get((w_idx, 'ankle'))
         if ankle_cache is None:
             continue
-        
-        # Get original magnetometer signal
+
         mag_cols = SENSORS['Mag_ankle']
         mag_original = data[win_start:win_end, mag_cols].copy()
-        
-        # Get gyro tremor
         gyro_tremor = ankle_cache['gyro_noise']
-        
-        # Apply rotation to get rotated mag
+
         mag_rotated = apply_tremor_rotation_to_magnetometer(
             mag_signal=mag_original,
             gyro_tremor=gyro_tremor,
             fs=ORIGINAL_FS
         )
-        
-        # Calculate perturbation
+
         mag_perturbation = mag_rotated - mag_original
-        
-        # Calculate statistics
+
         gyro_rms = np.sqrt(np.mean(gyro_tremor**2))
         perturbation_rms = np.sqrt(np.mean(mag_perturbation**2))
         original_norm_mean = np.mean(np.linalg.norm(mag_original, axis=1))
         rotated_norm_mean = np.mean(np.linalg.norm(mag_rotated, axis=1))
-        
+
         mag_ankle_stats['gyro_rms'].append(gyro_rms)
         mag_ankle_stats['mag_perturbation_rms'].append(perturbation_rms)
         mag_ankle_stats['mag_original_norm'].append(original_norm_mean)
         mag_ankle_stats['mag_rotated_norm'].append(rotated_norm_mean)
-        
+
         print(f"\nWindow {w_idx}:")
         print(f"  Gyro tremor RMS: {gyro_rms:.4f} deg/s")
         print(f"  Mag perturbation RMS: {perturbation_rms:.4f}")
         print(f"  Mag vector norm: original={original_norm_mean:.2f}, "
               f"rotated={rotated_norm_mean:.2f} (should be ~equal)")
         print(f"  Perturbation / Gyro ratio: {perturbation_rms/gyro_rms if gyro_rms > 0 else 0:.4f}")
-    
-    # Summary statistics
+
     print("\n" + "-"*80)
     print("MAG_ANKLE SUMMARY STATISTICS")
     print("-"*80)
@@ -558,13 +512,11 @@ def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list,
     print(f"  Original: mean={np.mean(mag_ankle_stats['mag_original_norm']):.2f}")
     print(f"  Rotated:  mean={np.mean(mag_ankle_stats['mag_rotated_norm']):.2f}")
     print(f"  Difference: {abs(np.mean(mag_ankle_stats['mag_original_norm']) - np.mean(mag_ankle_stats['mag_rotated_norm'])):.4f} (should be ~0)")
-    
-    # Check policy compliance
+
     print("\n" + "-"*80)
     print("SENSOR POLICY COMPLIANCE CHECK")
     print("-"*80)
-    
-    # Check tremor-free sensors
+
     print(f"\nTremor-free sensors: {pk_config.TREMOR_FREE_SENSORS}")
     for sensor in pk_config.TREMOR_FREE_SENSORS:
         body_part = extract_body_part(sensor)
@@ -573,8 +525,7 @@ def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list,
             meta = cache_entry['meta']
             print(f"  {sensor}: acc_rms={meta.get('acc_target_rms', 0.0):.4f} "
                   f"(chest always has values, but sensor gets no tremor)")
-    
-    # Check rotation-based mag sensors
+
     print(f"\nRotation-based mag sensors: {pk_config.ROTATION_BASED_MAG_SENSORS}")
     print("  These use gyro-driven rotation, NOT additive mag_noise")
     for sensor in pk_config.ROTATION_BASED_MAG_SENSORS:
@@ -583,12 +534,10 @@ def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list,
         if cache_entry:
             mag_noise_rms = np.sqrt(np.mean(cache_entry['mag_noise']**2))
             print(f"  {sensor}: mag_noise RMS={mag_noise_rms:.6f} (should be ~0)")
-    
-    # Check ankle scaling
+
     print(f"\nAnkle tremor scaling (interval mode):")
     print(f"  ANKLE_RATIO_BY_SCORE: {pk_config.ANKLE_RATIO_BY_SCORE}")
-    
-    # Sample a couple windows and check ankle vs arm ratio
+
     arm_acc_rms = []
     ankle_acc_rms = []
     for idx in sample_indices[:3]:
@@ -605,7 +554,7 @@ def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list,
             expected_ratio = pk_config.ANKLE_RATIO_BY_SCORE.get(score, 0)
             print(f"  Window {w_idx}: arm={arm_rms:.4f}, ankle={ankle_rms:.4f}, "
                   f"ratio={ratio:.3f}, expected={expected_ratio:.3f}, score={score}")
-    
+
     print("\n" + "="*80)
     print("SANITY CHECKS COMPLETE")
     print("="*80)
@@ -615,20 +564,19 @@ def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list,
 # Main Processing
 # ============================================================
 
-def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_alpha: float = 0.0):
+def generate_tremor_dataset(variant_name: str, augment_mode: str = None):
     """
-    Generate dataset with tremor labels.
-    
+    Generate dataset with tremor labels and full signal dropout corruption.
+
     Args:
-        variant_name: Name for this dataset variant (e.g., "s2_w2_fs50_tremor_clean")
+        variant_name: Name for this dataset variant (e.g., "s4_w4_fs50_tremor_clean_fullDrop")
         augment_mode: Tremor augmentation mode ("clean", "mild_mod", "mod_severe")
                      If None, uses pk_config.DEFAULT_AUGMENT_MODE
     """
-    
-    # Use provided augment_mode or fall back to config default
+
     if augment_mode is None:
         augment_mode = pk_config.DEFAULT_AUGMENT_MODE
-    
+
     print("=" * 80)
     print(f"TREMOR-LABELED DATASET GENERATION: {variant_name}")
     print("=" * 80)
@@ -637,68 +585,66 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
     print(f"Window: {WINDOW_SEC}s, Stride: {STRIDE_SEC}s")
     print(f"Augmentation: {AUG_SIZE} copies per window")
     print(f"Augmentation seed: {SEED}, Tremor seed: {TREMOR_SEED}")
+    print(f"Corruption: FULL DROPOUT (y(t) = 0 for all t)")
     print("=" * 80)
-    
-    # Create output directory
+
     variant_dir = OUT_BASE / variant_name
     variant_dir.mkdir(parents=True, exist_ok=True)
-    
+
     window_len = int(round(WINDOW_SEC * ORIGINAL_FS))
     stride = int(round(STRIDE_SEC * ORIGINAL_FS))
-    
+
     # -------------------------------
     # Step 1: Collect window specs from all subjects
     # -------------------------------
     print("\n" + "=" * 80)
     print("STEP 1: Collecting window specifications...")
     print("=" * 80)
-    
+
     window_specs = []  # List of (subj_idx, label, win_start, win_end)
-    
+
     for subj_idx in range(1, NUM_SUBJECTS + 1):
         fname = DATA_PATH / f"mHealth_subject{subj_idx}.log"
         if not fname.exists():
             print(f"  [Subject {subj_idx:2d}] File not found: {fname}")
             continue
-        
+
         data = load_subject_data_with_retry(fname)
-        
+
         if data.shape[1] < 24:
             print(f"  [Subject {subj_idx:2d}] Skipping - insufficient columns")
             continue
-        
+
         labels = data[:, LABEL_COL].astype(int)
-        labels_used = labels[labels >= 1]
-        
-        # Create windows
+
         i = 0
         n_windows = 0
         while i + window_len <= len(data):
             lab_win = labels[i:i + window_len]
-            
+
             if np.all(lab_win >= 1):
                 lab_val = int(lab_win[0])
                 window_specs.append((subj_idx, lab_val, i, i + window_len))
                 n_windows += 1
-            
+
             i += stride
-        
+
         print(f"  [Subject {subj_idx:2d}] {n_windows:4d} windows")
-    
+
     print(f"\n✓ Total windows: {len(window_specs)}")
-    
+
     # -------------------------------
     # Step 2: Pre-compute tremor cache (or create dummy cache for clean data)
     # -------------------------------
     print("\n" + "=" * 80)
     print("STEP 2: Pre-computing tremor cache...")
     print("=" * 80)
-    
+
     def load_subject_data_func(subj_idx: int) -> np.ndarray:
         """Data loader for tremor cache."""
         fname = DATA_PATH / f"mHealth_subject{subj_idx}.log"
         return load_subject_data_with_retry(fname)
-    
+
     if GENERATE_TREMOR:
         tremor_cache = precompute_tremor_cache_with_parkinson_model(
             window_specs=window_specs,
@@ -719,7 +665,6 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
             augment_mode=augment_mode,
         )
     else:
-        # Create dummy cache for clean data
         print("  Generating CLEAN dataset (no tremor)")
         tremor_cache = {}
         for w_idx, (subj_idx, label, win_start, win_end) in enumerate(window_specs):
@@ -740,7 +685,7 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
                     }
                 }
         print(f"  ✓ Created clean cache with {len(tremor_cache)} entries")
-    
+
     # -------------------------------
     # Optional: Run sanity checks on tremor cache
     # -------------------------------
@@ -751,63 +696,53 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
             data_loader_func=load_subject_data_func,
             num_windows=NUM_DIAGNOSTIC_WINDOWS
         )
-    
+
     # -------------------------------
     # Step 3: Process each sensor and save
     # -------------------------------
     print("\n" + "=" * 80)
-    print("STEP 3: Processing sensors and applying tremor...")
+    print("STEP 3: Processing sensors and applying tremor + full dropout...")
     print("=" * 80)
-    
-    aug_rng  = np.random.default_rng(SEED)
-    awgn_rng = np.random.default_rng(AWGN_SEED)
+
+    aug_rng = np.random.default_rng(SEED)
     target_window_len = int(round(WINDOW_SEC * FS))
-    
+
     for sensor_name, cols in SENSORS.items():
         print(f"\n  Processing: {sensor_name}")
-        
+
         X_list = []
         y_list = []
         subj_list = []
         base_idx_list = []
-        
-        # Tremor label arrays
+
         tremor_freq_list = []
         tremor_acc_rms_list = []
         tremor_gyro_rms_list = []
         tremor_score_list = []
-        
+
         sensor_type = get_sensor_type(sensor_name)
-        
-        # Determine body parts for different purposes:
-        # - signal_body_part: actual sensor location (for IMU sensor signal processing)
-        # - severity_body_part: which cache to use for global tremor severity (for augmentation strategy)
         signal_body_part = extract_body_part(sensor_name)
-        
-        # For tremor-free sensors (defined in tremor policy): use arm severity as global reference
-        # For all other sensors: use their own body part
+
         if sensor_name in pk_config.TREMOR_FREE_SENSORS:
-            severity_body_part = 'arm'  # Use arm as global severity reference
+            severity_body_part = 'arm'
         else:
             severity_body_part = signal_body_part
-        
-        # Load all subject data
+
         subject_data_cache = {}
         for subj_idx in range(1, NUM_SUBJECTS + 1):
             fname = DATA_PATH / f"mHealth_subject{subj_idx}.log"
             if fname.exists():
                 subject_data_cache[subj_idx] = load_subject_data_with_retry(fname)
-        
-        # Process each window
+
         for w_idx, (subj_idx, label, win_start, win_end) in enumerate(window_specs):
             if subj_idx not in subject_data_cache:
                 continue
-            
+
             data = subject_data_cache[subj_idx]
-            
+
             # Extract window data
             win_raw = data[win_start:win_end, cols].copy()
-            
+
             # Get severity from appropriate cache for augmentation strategy
             severity_cache_entry = tremor_cache.get((w_idx, severity_body_part))
             severity_meta = severity_cache_entry.get('meta', {}) if severity_cache_entry else {}
@@ -821,41 +756,24 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
                 )
             else:
                 tremor_score_val = 0
-            
-            # Determine if this sensor should receive tremor or alternative augmentation
-            # Check tremor-free sensor policy (defined in tremor_parkinson_config)
-            apply_tremor = False
+
             apply_awgn_aug = False
             apply_rotation_aug = False
-            
+
             if sensor_name in pk_config.TREMOR_FREE_SENSORS:
-                # Tremor-free sensors: no tremor, use alternative augmentation
-                # Use arm severity score to determine augmentation strategy
-                # - Clean (score 0): no augmentation (keep original)
-                # - Mild (score 1-2): AWGN
-                # - Severe (score 3-4): Rotation (3-axis sensors) or AWGN (2-axis sensors like ECG)
                 if tremor_score_val == 0:
-                    # Clean: keep original signal
                     pass
                 elif tremor_score_val in [1, 2]:
-                    # Mild: use AWGN
                     apply_awgn_aug = True
-                else:  # score 3 or 4
-                    # Severe: use rotation for 3-axis sensors, AWGN for others
+                else:
                     if sensor_type == 'acc':
                         apply_rotation_aug = True
-                    else:  # ECG or other 2-axis sensors: use AWGN
+                    else:
                         apply_awgn_aug = True
             else:
-                # All other sensors: apply tremor based on tremor model
-                # Use signal_body_part cache for actual tremor noise
                 signal_cache_entry = tremor_cache.get((w_idx, signal_body_part))
                 if signal_cache_entry is not None:
-                    # Special case: rotation-based magnetometer tremor (defined in policy)
-                    # instead of independent additive noise
                     if sensor_name in pk_config.ROTATION_BASED_MAG_SENSORS:
-                        # Magnetometer tremor is modeled as a consequence of tremor-induced
-                        # orientation changes, not as independent additive tremor noise
                         gyro_tremor = signal_cache_entry['gyro_noise']
                         win_raw = apply_tremor_rotation_to_magnetometer(
                             mag_signal=win_raw,
@@ -863,40 +781,35 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
                             fs=ORIGINAL_FS
                         )
                     elif sensor_type in ['acc', 'gyro', 'mag']:
-                        # Standard additive tremor for acc, gyro, and other mag sensors
                         noise_key = f'{sensor_type}_noise'
                         tremor_noise = signal_cache_entry[noise_key]
                         win_raw += tremor_noise
-            
+
             # Apply AWGN augmentation if applicable (before resampling)
             if apply_awgn_aug:
                 win_raw = apply_awgn_raw(win_raw, aug_rng, rms_ratio=0.15)
-            
+
             # Apply rotation augmentation if applicable (before resampling)
             if apply_rotation_aug:
                 win_raw = apply_rotation_augmentation(win_raw, aug_rng, max_angle_deg=10.0)
-            
-            # Apply global AWGN corruption (all sensors, raw domain before resampling)
-            if awgn_alpha > 0:
-                win_raw = apply_awgn_raw(win_raw, awgn_rng, rms_ratio=awgn_alpha)
-            
+
             # Resample
             win_resampled = resample_window(win_raw, ORIGINAL_FS, FS)
-            
+
+            # Apply global full dropout corruption (after resampling, before z-score)
+            win_resampled = apply_full_dropout(win_resampled)
+
             # Z-score normalize
+            # Note: zscore of all-zero signal returns zeros (std guard sets std=1)
             win = zscore_window(win_resampled)
-            
-            # Set tremor labels for this window
-            # For tremor-free sensors (defined in policy): set labels to 0 (no tremor in signal)
-            # For all other sensors: use actual tremor parameters from signal cache
+
+            # Set tremor labels
             if sensor_name in pk_config.TREMOR_FREE_SENSORS:
-                # These sensors have NO tremor, labels should reflect that
                 tremor_freq = 0.0
                 tremor_acc_rms = 0.0
                 tremor_gyro_rms = 0.0
                 tremor_score = 0
             else:
-                # Other sensors: use actual tremor labels from signal cache
                 signal_cache_entry = tremor_cache.get((w_idx, signal_body_part))
                 if signal_cache_entry is not None and GENERATE_TREMOR:
                     meta = signal_cache_entry['meta']
@@ -910,38 +823,32 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
                         )
                     )
                 else:
-                    # Clean data
                     tremor_freq = 0.0
                     tremor_acc_rms = 0.0
                     tremor_gyro_rms = 0.0
                     tremor_score = 0
-            
-            # Apply augmentation (creates AUG_SIZE copies)
+
             for a in range(AUG_SIZE):
-                win_aug = augment_window(win.copy(), aug_rng)
-                
-                X_list.append(win_aug.T.astype(np.float32))  # (C, L)
+                X_list.append(win.T.astype(np.float32))  # (C, L) — pure zeros, no augmentation noise
                 y_list.append(label - 1)                      # 0..11
                 subj_list.append(subj_idx)
                 base_idx_list.append(w_idx)
-                
-                # Same tremor labels for all augmented copies
+
                 tremor_freq_list.append(tremor_freq)
                 tremor_acc_rms_list.append(tremor_acc_rms)
                 tremor_gyro_rms_list.append(tremor_gyro_rms)
                 tremor_score_list.append(tremor_score)
-        
-        # Stack arrays
+
         X = np.stack(X_list, axis=0)
         y = np.array(y_list, dtype=np.int64)
         subject_ids = np.array(subj_list, dtype=np.int64)
         base_window_idx = np.array(base_idx_list, dtype=np.int64)
-        
+
         tremor_freq = np.array(tremor_freq_list, dtype=np.float32)
         tremor_acc_rms = np.array(tremor_acc_rms_list, dtype=np.float32)
         tremor_gyro_rms = np.array(tremor_gyro_rms_list, dtype=np.float32)
         tremor_score = np.array(tremor_score_list, dtype=np.int8)
-        
+
         # Save NPZ with tremor labels
         npz_out = variant_dir / f"{sensor_name}.npz"
         np.savez_compressed(
@@ -960,99 +867,74 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
             sensor_name=sensor_name,
             sensor_cols=np.array(cols, dtype=np.int64),
         )
-        
+
         # Save TXT with all labels
         txt_out = variant_dir / f"{sensor_name}.txt"
         flat_rows = flatten_channel_blocks(X)
-        
-        # Stack all labels as columns
+
         all_labels = np.column_stack([
-            (y + 1),              # Activity label (1-indexed)
-            subject_ids,          # Subject ID
-            base_window_idx,      # Base window index
-            tremor_freq,          # Tremor frequency (Hz)
-            tremor_acc_rms,       # Acc RMS (m/s²)
-            tremor_gyro_rms,      # Gyro RMS (deg/s)
-            tremor_score          # Severity score (0-4)
+            (y + 1),
+            subject_ids,
+            base_window_idx,
+            tremor_freq,
+            tremor_acc_rms,
+            tremor_gyro_rms,
+            tremor_score
         ])
-        
+
         sensor_txt = np.hstack([flat_rows, all_labels]).astype(np.float32)
         np.savetxt(txt_out, sensor_txt, delimiter=",", fmt="%.6f")
-        
+
         print(f"    ✓ Saved: {npz_out.name}, {txt_out.name} | X={X.shape}, tremor_labels={tremor_freq.shape}")
-    
+
     # -------------------------------
     # Step 3.5: Generate Tremor-Branch Datasets (Acc_arm, Gyro_arm)
     # -------------------------------
-    # 
-    # TREMOR-BRANCH vs HAR-BRANCH EXPLANATION:
-    # -----------------------------------------
-    # HAR (Human Activity Recognition) branch:
-    #   - Uses z-score normalization to suppress amplitude variations
-    #   - Benefits activity recognition by making patterns scale-invariant
-    #   - Applies final augmentation noise for robustness
-    #
-    # Tremor-estimation branch:
-    #   - PRESERVES original amplitude information (no z-score normalization)
-    #   - Tremor severity depends on absolute signal magnitude (RMS amplitude)
-    #   - Uses same tremor-corrupted signal as HAR (after tremor/augmentation)
-    #   - Resampled to target FS (for consistency with HAR)
-    #   - NO final augmentation noise (preserves clean amplitude for regression)
-    #
-    # Pipeline comparison:
-    #   HAR:    raw → tremor/aug → resample → z-score → augment_window → save
-    #   Tremor: raw → tremor/aug → resample → save (no normalization, no noise)
-    # 
     print("\n" + "=" * 80)
     print("STEP 3.5: Generating Tremor-Branch Datasets (for tremor severity estimation)...")
     print("=" * 80)
     print("Note: Tremor-branch datasets preserve amplitude information (no z-score normalization)")
-    print("      This is required for tremor severity estimation based on signal magnitude.")
+    print("      Full dropout is applied; all amplitude information is therefore zero.")
     print("")
-    
-    # Define sensors for tremor-branch (only arm IMU)
+
     TREMOR_BRANCH_SENSORS = {
         "Acc_arm": SENSORS["Acc_arm"],
         "Gyro_arm": SENSORS["Gyro_arm"],
     }
-    
-    aug_rng_tremor = np.random.default_rng(SEED)  # Use same seed for consistency
-    
+
+    aug_rng_tremor = np.random.default_rng(SEED)
+
     for sensor_name, cols in TREMOR_BRANCH_SENSORS.items():
         print(f"\n  Processing tremor-branch: {sensor_name}")
-        
+
         X_tremor_list = []
         y_tremor_list = []
         subj_tremor_list = []
         base_idx_tremor_list = []
-        
+
         tremor_freq_tremor_list = []
         tremor_acc_rms_tremor_list = []
         tremor_gyro_rms_tremor_list = []
         tremor_score_tremor_list = []
-        
+
         sensor_type = get_sensor_type(sensor_name)
         signal_body_part = extract_body_part(sensor_name)
-        severity_body_part = signal_body_part  # Arm sensors use their own severity
-        
-        # Load all subject data (reuse cache if possible, but create new for safety)
+        severity_body_part = signal_body_part
+
         subject_data_cache = {}
         for subj_idx in range(1, NUM_SUBJECTS + 1):
             fname = DATA_PATH / f"mHealth_subject{subj_idx}.log"
             if fname.exists():
                 subject_data_cache[subj_idx] = load_subject_data_with_retry(fname)
-        
-        # Process each window (same logic as HAR branch, but stop before z-score normalization)
+
         for w_idx, (subj_idx, label, win_start, win_end) in enumerate(window_specs):
             if subj_idx not in subject_data_cache:
                 continue
-            
+
             data = subject_data_cache[subj_idx]
-            
-            # Extract window data
+
             win_raw = data[win_start:win_end, cols].copy()
-            
-            # Get severity for augmentation strategy
+
             severity_cache_entry = tremor_cache.get((w_idx, severity_body_part))
             severity_meta = severity_cache_entry.get('meta', {}) if severity_cache_entry else {}
             tremor_acc_rms_target = severity_meta.get('acc_target_rms', 0.0)
@@ -1065,24 +947,22 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
                 )
             else:
                 tremor_score_val = 0
-            
-            # Apply tremor/augmentation (SAME as HAR branch)
-            # Arm sensors are NOT in TREMOR_FREE_SENSORS, so they get actual tremor
+
             signal_cache_entry = tremor_cache.get((w_idx, signal_body_part))
             if signal_cache_entry is not None:
                 if sensor_type in ['acc', 'gyro']:
                     noise_key = f'{sensor_type}_noise'
                     tremor_noise = signal_cache_entry[noise_key]
                     win_raw += tremor_noise
-            
-            # Resample (SAME as HAR branch)
+
+            # Resample
             win_resampled = resample_window(win_raw, ORIGINAL_FS, FS)
-            
-            # CRITICAL DIFFERENCE: Do NOT apply z-score normalization
-            # Use win_resampled directly (preserves amplitude for tremor severity estimation)
-            win_tremor = win_resampled
-            
-            # Set tremor labels (SAME as HAR branch)
+
+            # Apply full dropout (same as HAR branch)
+            win_tremor = apply_full_dropout(win_resampled)
+            # CRITICAL DIFFERENCE: No z-score normalization (preserves amplitude)
+            # All values are already zero due to full dropout
+
             signal_cache_entry = tremor_cache.get((w_idx, signal_body_part))
             if signal_cache_entry is not None and GENERATE_TREMOR:
                 meta = signal_cache_entry['meta']
@@ -1100,32 +980,27 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
                 tremor_acc_rms = 0.0
                 tremor_gyro_rms = 0.0
                 tremor_score = 0
-            
-            # NO augmentation copies for tremor branch (AUG_SIZE is skipped)
-            # NO augment_window noise (preserves clean amplitude)
-            # Save only one copy per window
-            X_tremor_list.append(win_tremor.T.astype(np.float32))  # (C, L)
-            y_tremor_list.append(label - 1)                         # 0..11
+
+            X_tremor_list.append(win_tremor.T.astype(np.float32))
+            y_tremor_list.append(label - 1)
             subj_tremor_list.append(subj_idx)
             base_idx_tremor_list.append(w_idx)
-            
+
             tremor_freq_tremor_list.append(tremor_freq)
             tremor_acc_rms_tremor_list.append(tremor_acc_rms)
             tremor_gyro_rms_tremor_list.append(tremor_gyro_rms)
             tremor_score_tremor_list.append(tremor_score)
-        
-        # Stack arrays
+
         X_tremor = np.stack(X_tremor_list, axis=0)
         y_tremor = np.array(y_tremor_list, dtype=np.int64)
         subject_ids_tremor = np.array(subj_tremor_list, dtype=np.int64)
         base_window_idx_tremor = np.array(base_idx_tremor_list, dtype=np.int64)
-        
+
         tremor_freq_tremor = np.array(tremor_freq_tremor_list, dtype=np.float32)
         tremor_acc_rms_tremor = np.array(tremor_acc_rms_tremor_list, dtype=np.float32)
         tremor_gyro_rms_tremor = np.array(tremor_gyro_rms_tremor_list, dtype=np.float32)
         tremor_score_tremor = np.array(tremor_score_tremor_list, dtype=np.int8)
-        
-        # Save tremor-branch files using helper function
+
         save_tremor_branch_sensor(
             variant_dir=variant_dir,
             sensor_name=sensor_name,
@@ -1142,18 +1017,18 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
             window_len=target_window_len,
             stride=int(round(STRIDE_SEC * FS))
         )
-    
+
     # -------------------------------
     # Step 4: Write variant info.txt
     # -------------------------------
     print("\n" + "=" * 80)
     print("STEP 4: Writing configuration files...")
     print("=" * 80)
-    
+
     info_txt = variant_dir / "info.txt"
     overlap = 1.0 - (STRIDE_SEC / WINDOW_SEC) if WINDOW_SEC > 0 else 0.0
     stride_samples = int(round(FS * STRIDE_SEC))
-    
+
     info_lines = [
         "=" * 80,
         "TREMOR-LABELED DATASET CONFIGURATION",
@@ -1170,11 +1045,19 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
         f"  - Augmentation seed: {SEED}",
         "",
         "=" * 80,
+        "Corruption: FULL SIGNAL DROPOUT",
+        "=" * 80,
+        "  All sensor samples are replaced with zero: y(t) = 0.",
+        "  Applied after resampling, before per-window z-score normalization.",
+        "  Models complete sensor failure (hardware failure, battery depletion,",
+        "  or complete communication loss).",
+        "",
+        "=" * 80,
         "Tremor Configuration:",
         "=" * 80,
         f"  - Generate tremor: {GENERATE_TREMOR}",
     ]
-    
+
     if GENERATE_TREMOR:
         info_lines.extend([
             f"  - Tremor seed: {TREMOR_SEED}",
@@ -1192,44 +1075,28 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
             "    * Score 3: Moderate-Severe (0.7-2.5 m/s²)",
             "    * Score 4: Severe (2.5-6.0 m/s²)",
             "",
-            "Model (interval): RMS_acc_base ~ Uniform(SCORE_RMS_RANGE[score])",
-            "       activity_beta = get_activity_beta_for_score(score, activity)",
-            "       RMS_acc = RMS_acc_base \u00d7 activity_beta  (saved as tremor_acc_rms)",
-            "       RMS_gyro = k_g(RMS_acc) \u00d7 RMS_acc  (saved as tremor_gyro_rms)",
-            "       Frequency = sampled from FREQ_RANGE_HZ per window",
-            "",
             "=" * 80,
-            "Augmentation Strategy:",
+            "Augmentation Strategy (tremor-free sensors only):",
             "=" * 80,
             f"Tremor-free sensors (policy: {pk_config.TREMOR_FREE_SENSORS}):",
-            "  - These sensors do NOT receive tremor in the signal (tremor-free zones)",
-            "  - Augmentation strategy determined by ARM severity score (global reference)",
             "  - Score 0 (Clean): Original signal (no augmentation)",
-            "  - Score 1-2 (Mild): AWGN (Additive White Gaussian Noise, RMS ratio 15%)",
+            "  - Score 1-2 (Mild): AWGN (RMS ratio 15%)",
             "  - Score 3-4 (Severe): Rotation matrix (3-axis) or AWGN (2-axis)",
-            "  - Tremor labels set to 0 (tremor_freq=0, tremor_acc_rms=0, tremor_gyro_rms=0)",
-            "",
-            "All other sensors (Acc_ankle, Acc_arm, Gyro_*, Mag_*):",
-            "  - Parkinson tremor applied based on sensor-specific severity score",
-            "  - Tremor labels reflect actual tremor in signal",
+            "  NOTE: All augmentation is applied BEFORE full dropout, so the",
+            "        final signal is zero regardless of augmentation mode.",
             "",
             f"Rotation-based magnetometer sensors (policy: {pk_config.ROTATION_BASED_MAG_SENSORS}):",
-            "  - Magnetometer tremor is NOT generated as independent additive noise",
-            "  - Instead: tremor-induced orientation changes from Gyro tremor are",
-            "    applied as cumulative rotations to the original magnetometer vector",
-            "  - Physical model: mag tremor = consequence of tremor-induced rotation",
-            "  - This preserves the baseline mag field structure while adding realistic",
-            "    secondary tremor effects from orientation perturbations",
+            "  - Magnetometer tremor modeled via gyro-driven cumulative rotations.",
+            "  NOTE: Rotation is applied BEFORE full dropout.",
             "",
             "Note: Tremor policies are defined in tremor_parkinson_config.py",
-            "      This ensures label consistency with actual signal content.",
         ])
     else:
         info_lines.extend([
             "  - This is a CLEAN dataset (no tremor)",
             "  - All tremor labels are set to 0",
         ])
-    
+
     info_lines.extend([
         "",
         "=" * 80,
@@ -1260,13 +1127,12 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
         "",
         "=" * 80,
     ])
-    
+
     with open(info_txt, 'w') as f:
         f.write('\n'.join(info_lines))
-    
+
     print(f"  ✓ Saved: {info_txt.name}")
-    
-    # Write Parkinson parameters file if tremor was generated
+
     if GENERATE_TREMOR:
         params_file = variant_dir / "tremor_parkinson_params.txt"
         write_tremor_parkinson_params_file(
@@ -1283,7 +1149,7 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
             scenario_seed=TREMOR_SEED
         )
         print(f"  ✓ Saved: {params_file.name}")
-    
+
     print("\n" + "=" * 80)
     print(f"✓ DATASET GENERATION COMPLETE: {variant_name}")
     print("=" * 80)
@@ -1294,46 +1160,41 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
 # ============================================================
 
 if __name__ == "__main__":
-    # Automatically generate all three tremor variants
-    # Format: s{STRIDE}_w{WINDOW}_fs{FS}_tremor_{augment_mode}
-    
     fs_str = f"fs{int(FS)}"
     base_name = f"s{int(STRIDE_SEC)}_w{int(WINDOW_SEC)}_{fs_str}_tremor"
-    
+    dropout_suffix = "_fullDrop"
+
     if GENERATE_TREMOR:
-        # Generate all three tremor variants in one run
         augment_modes = ["clean", "mild_mod", "mod_severe"]
         total_variants = len(augment_modes)
-        
+
         print("\n" + "="*80)
-        print(f"🔄 GENERATING {total_variants} TREMOR VARIANTS")
+        print(f"GENERATING {total_variants} TREMOR VARIANTS (full dropout)")
         print("="*80)
-        print(f"Base name: {base_name}_[mode]")
+        print(f"Base name: {base_name}_[mode]{dropout_suffix}")
         print(f"Variants: {', '.join(augment_modes)}")
         print("="*80 + "\n")
-        
+
         for idx, mode in enumerate(augment_modes, 1):
             print("\n" + "#"*80)
             print(f"#  VARIANT {idx}/{total_variants}: {mode.upper()}")
             print("#"*80 + "\n")
-            
-            awgn_suffix = f"_awgn_a{int(round(AWGN_ALPHA * 100)):03d}" if AWGN_ALPHA > 0 else ""
-            variant_name = f"{base_name}_{mode}{awgn_suffix}"
-            generate_tremor_dataset(variant_name, augment_mode=mode, awgn_alpha=AWGN_ALPHA)
-            
+
+            variant_name = f"{base_name}_{mode}{dropout_suffix}"
+            generate_tremor_dataset(variant_name, augment_mode=mode)
+
             print("\n" + "#"*80)
-            print(f"#  ✓ COMPLETED VARIANT {idx}/{total_variants}: {mode.upper()}")
+            print(f"#  COMPLETED VARIANT {idx}/{total_variants}: {mode.upper()}")
             print("#"*80 + "\n")
-        
+
         print("\n" + "="*80)
-        print(f"✅ ALL {total_variants} TREMOR VARIANTS GENERATED SUCCESSFULLY")
+        print(f"ALL {total_variants} TREMOR VARIANTS GENERATED SUCCESSFULLY")
         print("="*80)
         print("Generated variants:")
         for mode in augment_modes:
-            print(f"  ✓ {base_name}_{mode}")
+            print(f"  {base_name}_{mode}{dropout_suffix}")
         print("="*80 + "\n")
+
     else:
-        # Generate only clean dataset (no tremor)
-        awgn_suffix = f"_awgn_a{int(round(AWGN_ALPHA * 100)):03d}" if AWGN_ALPHA > 0 else ""
-        variant_name = f"{base_name}_clean{awgn_suffix}"
-        generate_tremor_dataset(variant_name, augment_mode="clean", awgn_alpha=AWGN_ALPHA)
+        variant_name = f"{base_name}_clean{dropout_suffix}"
+        generate_tremor_dataset(variant_name, augment_mode="clean")

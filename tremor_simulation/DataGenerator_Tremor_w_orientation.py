@@ -1,19 +1,25 @@
 """
-Data Generator for Tremor-Labeled Datasets
-===========================================
+Data Generator for Tremor-Labeled Datasets — with Orientation Perturbation
+===========================================================================
 
-This script generates datasets with Parkinson's tremor using two sampling methods:
+Identical to DataGenerator_Tremor_w_awgn.py except that the global corruption
+applied to every sensor window is **random orientation perturbation** instead
+of AWGN.
 
-1. SUBJECT-based (default): Each subject has fixed tremor characteristics
-   - Uses A_SUBJECT dict for baseline severity
-   - Uses FREQ_TREMOR dict for subject-specific frequency
-   - Modulated by body_part, activity, and jitter
-   - Realistic for patient-specific studies
+Orientation perturbation:
+  For each window a random 3-D rotation matrix R is sampled independently per
+  IMU body-location (chest / ankle / arm).  The same R is then applied to ALL
+  tri-axial channels (Acc, Gyro, Mag) at that location within that window:
 
-2. INTERVAL-based: Samples tremor parameters independently per window
-   - Samples from severity ranges (SCORE_RMS_RANGE)
-   - Random frequency per window (FREQ_RANGE_HZ)
-   - High variability, suited for augmentation studies
+      x'(t) = R x(t),    x(t) in R^3
+
+  Rotation angles up to MAX_ROTATION_DEG (default 45°) are used to simulate
+  severe sensor mis-placement scenarios.
+
+  ECG (2-axis) receives no rotation and is left unchanged.
+
+This models sensor misalignment and variations in wearable placement while
+preserving the physical structure of the underlying motion signal.
 
 Each window is labeled with:
   - tremor_freq: Tremor frequency (Hz)
@@ -25,8 +31,6 @@ Each window is labeled with:
 Can generate:
   1. CLEAN data: No tremor (tremor labels = 0)
   2. TREMOR data: Parkinson-specific tremor with per-window labels
-
-Based on DataGenerator_v3.py but uses precompute_tremor_cache_with_parkinson_model()
 """
 
 import sys
@@ -64,8 +68,8 @@ WINDOW_SEC = 4.0        # window length in seconds
 STRIDE_SEC = 4.0        # stride in seconds
 AUG_SIZE = 1            # number of augmented copies per window
 NOISE_LEVEL = 0.01      # augmentation noise level (NOT tremor)
-AWGN_ALPHA = 0.20       # AWGN corruption alpha (0 = no noise, 0.20 → ~14 dB SNR)
-AWGN_SEED  = 99         # RNG seed for AWGN (separate from augmentation seed)
+MAX_ROTATION_DEG = 45.0 # maximum rotation angle in degrees (per axis, per window)
+ROTATION_SEED    = 99   # RNG seed for orientation perturbation (separate from aug seed)
 NUM_SUBJECTS = 10
 
 # Dataset location
@@ -245,33 +249,63 @@ def apply_rotation_augmentation(win_raw: np.ndarray, rng: np.random.Generator, m
 
 def apply_awgn_raw(win_raw: np.ndarray, rng: np.random.Generator, rms_ratio: float = 0.2) -> np.ndarray:
     """
-    Apply AWGN to raw sensor signal with noise level relative to signal RMS.
-    
-    Args:
-        win_raw: Raw input window of shape (L, C) BEFORE preprocessing
-        rng: Random number generator
-        rms_ratio: Noise RMS as a fraction of signal RMS per channel (default 0.2 = 20%)
-        
-    Returns:
-        Corrupted window with same shape (L, C)
-        
-    Note:
-        Applied BEFORE resampling and z-score normalization.
+    Apply AWGN — used internally for tremor-free sensor augmentation only.
+    Not used as the global corruption in this variant.
     """
     L, C = win_raw.shape
     noise = np.zeros_like(win_raw)
-    
-    # Add noise independently per channel
     for c in range(C):
         signal_rms = np.sqrt(np.mean(win_raw[:, c]**2))
-        # Avoid division by zero for flat signals
         if signal_rms < 1e-8:
             signal_rms = 1.0
-        
-        noise_std = rms_ratio * signal_rms
-        noise[:, c] = rng.normal(0, noise_std, size=L)
-    
+        noise[:, c] = rng.normal(0, rms_ratio * signal_rms, size=L)
     return win_raw + noise
+
+
+def _make_rotation_matrix(rng: np.random.Generator, max_angle_deg: float) -> np.ndarray:
+    """
+    Sample a random 3-D rotation matrix with each Euler angle drawn uniformly
+    from [-max_angle_deg, +max_angle_deg].  Combined as R = Rz @ Ry @ Rx.
+    """
+    max_rad = np.deg2rad(max_angle_deg)
+    theta_x, theta_y, theta_z = rng.uniform(-max_rad, max_rad, size=3)
+
+    Rx = np.array([
+        [1,               0,               0],
+        [0,  np.cos(theta_x), -np.sin(theta_x)],
+        [0,  np.sin(theta_x),  np.cos(theta_x)],
+    ])
+    Ry = np.array([
+        [ np.cos(theta_y), 0, np.sin(theta_y)],
+        [ 0,               1,              0],
+        [-np.sin(theta_y), 0, np.cos(theta_y)],
+    ])
+    Rz = np.array([
+        [np.cos(theta_z), -np.sin(theta_z), 0],
+        [np.sin(theta_z),  np.cos(theta_z), 0],
+        [0,                0,               1],
+    ])
+    return Rz @ Ry @ Rx
+
+
+def apply_orientation_perturbation(win_raw: np.ndarray, R: np.ndarray) -> np.ndarray:
+    """
+    Apply a 3-D rotation matrix to a tri-axial sensor window.
+
+    Args:
+        win_raw: Raw input window of shape (L, 3) BEFORE preprocessing.
+        R:       3×3 rotation matrix.
+
+    Returns:
+        Rotated window of the same shape (L, 3).
+
+    Note:
+        Applied AFTER resampling and BEFORE z-score normalization.
+        The same R should be used for Acc, Gyro, and Mag at the same body
+        location within a given window (call _make_rotation_matrix once per
+        (window, body_part) and share the result).
+    """
+    return win_raw @ R.T   # (L, 3) @ (3, 3)^T = (L, 3)
 
 
 def load_subject_data_with_retry(file_path: Path, max_retries: int = 5, delay: float = 2.0) -> np.ndarray:
@@ -615,14 +649,16 @@ def run_tremor_sanity_checks(tremor_cache: dict, window_specs: list,
 # Main Processing
 # ============================================================
 
-def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_alpha: float = 0.0):
+def generate_tremor_dataset(variant_name: str, augment_mode: str = None, max_rotation_deg: float = 0.0):
     """
     Generate dataset with tremor labels.
-    
+
     Args:
-        variant_name: Name for this dataset variant (e.g., "s2_w2_fs50_tremor_clean")
-        augment_mode: Tremor augmentation mode ("clean", "mild_mod", "mod_severe")
-                     If None, uses pk_config.DEFAULT_AUGMENT_MODE
+        variant_name:     Name for this dataset variant.
+        augment_mode:     Tremor augmentation mode ("clean", "mild_mod", "mod_severe").
+                          If None, uses pk_config.DEFAULT_AUGMENT_MODE.
+        max_rotation_deg: Maximum rotation angle (degrees per axis) for orientation
+                          perturbation.  0 = disabled.
     """
     
     # Use provided augment_mode or fall back to config default
@@ -759,9 +795,18 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
     print("STEP 3: Processing sensors and applying tremor...")
     print("=" * 80)
     
-    aug_rng  = np.random.default_rng(SEED)
-    awgn_rng = np.random.default_rng(AWGN_SEED)
+    aug_rng      = np.random.default_rng(SEED)
+    rotation_rng = np.random.default_rng(ROTATION_SEED)
     target_window_len = int(round(WINDOW_SEC * FS))
+
+    # Pre-compute one rotation matrix per (window, body_part) so that all
+    # tri-axial sensors at the same body location share the same R.
+    body_parts = ['chest', 'ankle', 'arm']
+    rotation_cache: dict = {}
+    if max_rotation_deg > 0:
+        for w_idx in range(len(window_specs)):
+            for bp in body_parts:
+                rotation_cache[(w_idx, bp)] = _make_rotation_matrix(rotation_rng, max_rotation_deg)
     
     for sensor_name, cols in SENSORS.items():
         print(f"\n  Processing: {sensor_name}")
@@ -875,14 +920,17 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
             # Apply rotation augmentation if applicable (before resampling)
             if apply_rotation_aug:
                 win_raw = apply_rotation_augmentation(win_raw, aug_rng, max_angle_deg=10.0)
-            
-            # Apply global AWGN corruption (all sensors, raw domain before resampling)
-            if awgn_alpha > 0:
-                win_raw = apply_awgn_raw(win_raw, awgn_rng, rms_ratio=awgn_alpha)
-            
+
             # Resample
             win_resampled = resample_window(win_raw, ORIGINAL_FS, FS)
-            
+
+            # Apply global orientation perturbation (after resampling, before z-score)
+            # The same R is used for all tri-axial sensors at the same body location.
+            if max_rotation_deg > 0 and len(cols) == 3:
+                R = rotation_cache[(w_idx, signal_body_part)]
+                win_resampled = apply_orientation_perturbation(win_resampled, R)
+            # ECG (2-axis) receives no rotation — left unchanged
+
             # Z-score normalize
             win = zscore_window(win_resampled)
             
@@ -1168,6 +1216,8 @@ def generate_tremor_dataset(variant_name: str, augment_mode: str = None, awgn_al
         f"  - Augmentation copies (AUG_SIZE): {AUG_SIZE}",
         f"  - Augmentation noise level: {NOISE_LEVEL}",
         f"  - Augmentation seed: {SEED}",
+        f"  - Orientation perturbation max angle: {max_rotation_deg:.1f} deg",
+        f"  - Rotation seed: {ROTATION_SEED}",
         "",
         "=" * 80,
         "Tremor Configuration:",
@@ -1300,40 +1350,41 @@ if __name__ == "__main__":
     fs_str = f"fs{int(FS)}"
     base_name = f"s{int(STRIDE_SEC)}_w{int(WINDOW_SEC)}_{fs_str}_tremor"
     
+    orient_suffix = f"_orient_r{int(round(MAX_ROTATION_DEG)):03d}" if MAX_ROTATION_DEG > 0 else ""
+
     if GENERATE_TREMOR:
         # Generate all three tremor variants in one run
         augment_modes = ["clean", "mild_mod", "mod_severe"]
         total_variants = len(augment_modes)
-        
+
         print("\n" + "="*80)
-        print(f"🔄 GENERATING {total_variants} TREMOR VARIANTS")
+        print(f"GENERATING {total_variants} TREMOR VARIANTS (orientation perturbation)")
         print("="*80)
-        print(f"Base name: {base_name}_[mode]")
+        print(f"Base name: {base_name}_[mode]{orient_suffix}")
         print(f"Variants: {', '.join(augment_modes)}")
+        print(f"Max rotation angle: {MAX_ROTATION_DEG:.1f} deg")
         print("="*80 + "\n")
-        
+
         for idx, mode in enumerate(augment_modes, 1):
             print("\n" + "#"*80)
             print(f"#  VARIANT {idx}/{total_variants}: {mode.upper()}")
             print("#"*80 + "\n")
-            
-            awgn_suffix = f"_awgn_a{int(round(AWGN_ALPHA * 100)):03d}" if AWGN_ALPHA > 0 else ""
-            variant_name = f"{base_name}_{mode}{awgn_suffix}"
-            generate_tremor_dataset(variant_name, augment_mode=mode, awgn_alpha=AWGN_ALPHA)
-            
+
+            variant_name = f"{base_name}_{mode}{orient_suffix}"
+            generate_tremor_dataset(variant_name, augment_mode=mode, max_rotation_deg=MAX_ROTATION_DEG)
+
             print("\n" + "#"*80)
-            print(f"#  ✓ COMPLETED VARIANT {idx}/{total_variants}: {mode.upper()}")
+            print(f"#  COMPLETED VARIANT {idx}/{total_variants}: {mode.upper()}")
             print("#"*80 + "\n")
-        
+
         print("\n" + "="*80)
-        print(f"✅ ALL {total_variants} TREMOR VARIANTS GENERATED SUCCESSFULLY")
+        print(f"ALL {total_variants} TREMOR VARIANTS GENERATED SUCCESSFULLY")
         print("="*80)
         print("Generated variants:")
         for mode in augment_modes:
-            print(f"  ✓ {base_name}_{mode}")
+            print(f"  {base_name}_{mode}{orient_suffix}")
         print("="*80 + "\n")
     else:
         # Generate only clean dataset (no tremor)
-        awgn_suffix = f"_awgn_a{int(round(AWGN_ALPHA * 100)):03d}" if AWGN_ALPHA > 0 else ""
-        variant_name = f"{base_name}_clean{awgn_suffix}"
-        generate_tremor_dataset(variant_name, augment_mode="clean", awgn_alpha=AWGN_ALPHA)
+        variant_name = f"{base_name}_clean{orient_suffix}"
+        generate_tremor_dataset(variant_name, augment_mode="clean", max_rotation_deg=MAX_ROTATION_DEG)

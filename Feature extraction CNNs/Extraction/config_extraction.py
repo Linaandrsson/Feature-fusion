@@ -10,16 +10,29 @@ from pathlib import Path
 # model_variant = "fs50_tremor_mixed_all3"   # Which variant models were trained ON
 
 #mixed:
-# dataset_config = "s4_w4_mixed"
-# variant_name   = "s4_w4_fs50_tremor_clean"   # bytt for hver korrupt variant
-# model_variant  = "fs50_tremor_mixed_all3"
+dataset_config = "s4_w4"
+#variant_name   = "s4_w4_fs50_tremor_clean_awgn_a000"   # bytt for hver korrupt variant
+#variant_name   = "s4_w4_fs50_tremor_mild_mod_awgn_a000"
+#variant_name   = "s4_w4_fs50_tremor_mod_severe_awgn_a000"
+#variant_name = "s4_w4_fs50_tremor_clean_orient_r045"
+#variant_name = "s4_w4_fs50_tremor_clean_dropout_p010"
+
+#variant_name = "s4_w4_fs50_tremor_clean_fullDrop"
+#variant_name = "s4_w4_fs50_tremor_mild_mod_fullDrop"
+variant_name = "s4_w4_fs50_tremor_mod_severe_fullDrop"
+model_variant  = "fs50_tremor_mixed_all3"
 
 #clean
-dataset_config = "s4_w4"
-#variant_name   = "s4_w4_fs50_tremor_clean_awgn_a010"   # bytt for hver korrupt variant
-#variant_name   = "s4_w4_fs50_tremor_mild_mod_awgn_a010"
-variant_name   = "s4_w4_fs50_tremor_mod_severe_awgn_a010"
-model_variant  = "fs50_tremor_clean"
+# dataset_config = "s4_w4"
+# # #variant_name   = "s4_w4_fs50_tremor_clean_awgn_a100"   # bytt for hver korrupt variant
+# # #variant_name   = "s4_w4_fs50_tremor_mild_mod_awgn_a100"
+# # variant_name   = "s4_w4_fs50_tremor_mod_severe"
+# # #variant_name = "s4_w4_fs50_tremor_mild_mod"
+# #variant_name = "s4_w4_fs50_tremor_clean_orient_r045"
+# #variant_name = "s4_w4_fs50_tremor_clean_fullDrop"
+# #variant_name = "s4_w4_fs50_tremor_mild_mod_fullDrop"
+# variant_name = "s4_w4_fs50_tremor_mod_severe_fullDrop"
+# model_variant  = "fs50_tremor_clean"
 
 seq_len = 200                       # Must match model training AND data FS! (50 Hz × 4s)
 # ==================================================================
@@ -50,7 +63,7 @@ batch_size = 256
 device = "cuda"  # or "cpu"
 
 # Output directory (features saved inside variant directory)
-output_dir = variant_dir / "ExtractedFeatures_clean" #cleanwhen exrtcated with clean feature extractor, mixed when the other
+output_dir = variant_dir / "ExtractedFeatures_mixed" #cleanwhen exrtcated with clean feature extractor, mixed when the other
 
 def get_model_path(sensor_name: str) -> Path:
     """Get path to trained model checkpoint for a sensor."""
