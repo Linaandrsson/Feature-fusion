@@ -39,17 +39,17 @@
     "val_loss": 0.6399284993972424
   },
   "s4_w4_aug1_fs50_mixed/ECG": {
-    "accuracy": 0.22884012539184953,
+    "accuracy": 0.23824451410658307,
     "architecture": "ECGCNN(\n  (features): Sequential(\n    (0): Conv1d(2, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (1): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (2): ReLU()\n    (3): Dropout(p=0.4, inplace=False)\n    (4): Conv1d(128, 128, kernel_size=(5,), stride=(1,), padding=(2,))\n    (5): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n    (6): ReLU()\n    (7): AdaptiveAvgPool1d(output_size=1)\n    (8): Dropout(p=0.4, inplace=False)\n  )\n  (flatten): Flatten(start_dim=1, end_dim=-1)\n  (fc_embed): Linear(in_features=128, out_features=128, bias=True)\n  (bn_embed): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)\n  (drop_cls): Dropout(p=0.6, inplace=False)\n  (fc_cls): Linear(in_features=128, out_features=12, bias=True)\n)",
-    "f1": 0.1975342415738676,
-    "random_seed": 59817,
-    "test_loss": 2.257861414174924,
-    "timestamp": "2026-05-19T18:08:14.674696",
+    "f1": 0.19813242914451226,
+    "random_seed": 17867,
+    "test_loss": 2.272428667532862,
+    "timestamp": "2026-05-28T15:56:41.540414",
     "total_params": 102284,
     "trainable_params": 102284,
-    "val_acc": 0.29075804776739356,
-    "val_f1": 0.2281132403867023,
-    "val_loss": 1.9492680357995433
+    "val_acc": 0.27102803738317754,
+    "val_f1": 0.1936762601717277,
+    "val_loss": 1.9944604973183986
   },
   "s4_w4_aug1_fs50_mixed/Gyro_ankle": {
     "accuracy": 0.48171368861024033,

@@ -1,0 +1,19 @@
+\begin{table}[H]
+    \centering
+    \caption{Best sensor combination per $k$ for the \texttt{mixed\_train\_tremor\_mixed\_all3} condition. For each sensor count $k$, the combination with the highest seed-averaged test F1 macro is shown.}
+    \label{tab:best_combo_mixed_train_tremor_mixed_all3}
+    \begin{tabular}{clc}
+        \toprule
+        $k$ & \textbf{Sensors} & \textbf{Mean F1} \\
+        \midrule
+        1 & Acc ankle & 0.8205 \\
+        2 & Mag ankle, Acc chest & 0.9167 \\
+        3 & Acc ankle, Mag ankle, Mag arm & 0.9471 \\
+        4 & Acc ankle, Mag ankle, Mag arm, Acc chest & 0.9552 \\
+        5 & Acc ankle, Gyro ankle, Mag ankle, Mag arm, Acc chest & 0.9587 \\
+        6 & Acc ankle, Acc arm, Gyro ankle, Mag ankle, Mag arm, Acc chest & 0.9610 \\
+        7 & Acc ankle, Gyro ankle, Gyro arm, Mag ankle, Mag arm, Acc chest, ECG & 0.9591 \\
+        8 & Acc ankle, Acc arm, Gyro ankle, Gyro arm, Mag ankle, Mag arm, Acc chest, ECG & 0.9577 \\
+        \bottomrule
+    \end{tabular}
+\end{table}

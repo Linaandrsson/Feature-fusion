@@ -45,11 +45,12 @@ from typing import List, Dict, Tuple, Optional
 # -------------------------------
 # Reproducibility
 # -------------------------------
-SEED = 39
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)
+SEED = [30, 31, 32, 33, 34, 35, 36, 37, 38, 39]   # single int or list of ints
+_init_seed = SEED[0] if isinstance(SEED, list) else SEED
+random.seed(_init_seed)
+np.random.seed(_init_seed)
+torch.manual_seed(_init_seed)
+torch.cuda.manual_seed_all(_init_seed)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 torch.use_deterministic_algorithms(True, warn_only=True)
@@ -88,9 +89,9 @@ base_data_dir = Path(__file__).parents[3] / "data" / "Tremor_datagenerator_files
 # If empty, folder stays "ablation_reports".
 
 #mixed:
-tremor_variants = ["s4_w4_fs50_tremor_clean", "s4_w4_fs50_tremor_mild_mod", "s4_w4_fs50_tremor_mod_severe"]  # mixed 
-ABLATION_REPORT_TAG = "mixed_k4_mixed_test_accAnkle_fullDropout"
-embeddings_folder_name = "ExtractedFeatures_mixed"  # Folder name where CNN embeddings are stored (train/val)
+tremor_variants = ["s4_w4_fs50_tremor_clean"]  # mixed 
+ABLATION_REPORT_TAG = "clean_k4_mixed_test_accChest_fullDropout"
+embeddings_folder_name = "ExtractedFeatures_clean"  # Folder name where CNN embeddings are stored (train/val)
 
 #clean:
 # tremor_variants = ["s4_w4_fs50_tremor_clean"]  # clean 
@@ -130,10 +131,10 @@ corrupt_test_variant = ["s4_w4_fs50_tremor_clean", "s4_w4_fs50_tremor_mild_mod",
 #
 
 # Available sensors (ablation will test subsets of these)
-ALL_SENSORS = ["Acc_ankle", "Acc_arm", "Mag_ankle", "Mag_arm"]
+ALL_SENSORS = ["Acc_ankle", "Mag_ankle", "Mag_arm", "Acc_chest"]
 
 corrupt_test_mix: Dict[str, Dict[str, float]] = {
-    "Acc_ankle":  {"s4_w4_fs50_tremor_clean_fullDrop": 1},
+    "Acc_chest":  {"s4_w4_fs50_tremor_clean_fullDrop": 1},
 }
 # Leave the dict empty {} to use corrupt_test_variant (100 %) for all sensors.
 #corrupt_test_mix: Dict[str, Dict[str, float]] = {}
@@ -1255,10 +1256,15 @@ if __name__ == "__main__":
         ABLATION_K = [args.ablation_k]
     if args.seed is not None:
         SEED = args.seed
+    if args.corrupt_test_variant is not None:
+        corrupt_test_variant = args.corrupt_test_variant
+
+    seeds_to_run = SEED if isinstance(SEED, list) else [SEED]
+    for _seed in seeds_to_run:
+        SEED = _seed
         random.seed(SEED)
         np.random.seed(SEED)
         torch.manual_seed(SEED)
         torch.cuda.manual_seed_all(SEED)
-    if args.corrupt_test_variant is not None:
-        corrupt_test_variant = args.corrupt_test_variant
-    main()
+        print(f"\n{'='*60}\nRunning with SEED={SEED} ({seeds_to_run.index(_seed)+1}/{len(seeds_to_run)})\n{'='*60}")
+        main()

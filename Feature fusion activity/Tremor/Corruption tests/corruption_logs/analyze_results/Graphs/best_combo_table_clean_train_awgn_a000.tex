@@ -1,0 +1,19 @@
+\begin{table}[H]
+    \centering
+    \caption{Best sensor combination per $k$ for the \texttt{clean\_train\_awgn\_a000} condition. For each sensor count $k$, the combination with the highest seed-averaged test F1 macro is shown.}
+    \label{tab:best_combo_clean_train_awgn_a000}
+    \begin{tabular}{clc}
+        \toprule
+        $k$ & \textbf{Sensors} & \textbf{Mean F1} \\
+        \midrule
+        1 & Acc ankle & 0.8661 \\
+        2 & Acc ankle, Mag ankle & 0.9269 \\
+        3 & Acc ankle, Mag ankle, Acc chest & 0.9534 \\
+        4 & Acc ankle, Gyro arm, Mag ankle, Mag arm & 0.9660 \\
+        5 & Acc ankle, Acc arm, Mag ankle, Mag arm, Acc chest & 0.9680 \\
+        6 & Acc ankle, Acc arm, Gyro arm, Mag ankle, Mag arm, Acc chest & 0.9718 \\
+        7 & Acc ankle, Acc arm, Gyro ankle, Gyro arm, Mag ankle, Mag arm, Acc chest & 0.9727 \\
+        8 & Acc ankle, Acc arm, Gyro ankle, Gyro arm, Mag ankle, Mag arm, Acc chest, ECG & 0.9683 \\
+        \bottomrule
+    \end{tabular}
+\end{table}

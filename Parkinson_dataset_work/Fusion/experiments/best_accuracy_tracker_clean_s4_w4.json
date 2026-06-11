@@ -1,10 +1,10 @@
 {
   "clean_s4_w4__ALL-ALR-AUL-AUR-AHd-GLL-GLR-GUL-GUR-GHd-MLL-MLR-MUL-MUR-MHd_fs50": {
-    "best_test_accuracy": 0.828018,
-    "best_test_f1_macro": 0.824815,
-    "best_test_f1_weighted": 0.824171,
+    "best_test_accuracy": 0.832574,
+    "best_test_f1_macro": 0.82419,
+    "best_test_f1_weighted": 0.827711,
     "seed": 41,
-    "timestamp": "2026-04-22 09:34:19",
+    "timestamp": "2026-06-08 13:39:09",
     "model_file": "clean_s4_w4__ALL-ALR-AUL-AUR-AHd-GLL-GLR-GUL-GUR-GHd-MLL-MLR-MUL-MUR-MHd_fs50_best.pth",
     "sensors": [
       "Acc_LL",

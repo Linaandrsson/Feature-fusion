@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-04-22 09:56:45",
+  "timestamp": "2026-06-08 13:40:08",
   "eval_tag": "eval_clean_pd_s4",
   "data_variants": [
     "s4_w4_fs50_tremor_parkinson"
@@ -41,11 +41,11 @@
     "Mag_head": 50
   },
   "n_samples": 4362,
-  "trained_test_acc": 0.828018,
-  "trained_test_f1": 0.824815,
+  "trained_test_acc": 0.832574,
+  "trained_test_f1": 0.82419,
   "trained_seed": 41,
   "variant_subjects_filter": null,
-  "eval_accuracy": 0.81293,
-  "eval_f1_macro": 0.808783,
-  "eval_f1_weighted": 0.810979
+  "eval_accuracy": 0.821641,
+  "eval_f1_macro": 0.817159,
+  "eval_f1_weighted": 0.81931
 }

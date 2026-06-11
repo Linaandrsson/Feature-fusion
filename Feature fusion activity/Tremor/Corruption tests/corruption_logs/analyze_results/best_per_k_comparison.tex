@@ -1,0 +1,23 @@
+\begin{table}[ht]
+\centering
+\caption{Best sensor combination per $k$ for clean- and mixed-trained models, ranked by mean macro-F1 across all AWGN corruption levels ($\alpha \in \{0.00, 0.10, 0.18, 0.32, 0.50, 0.71, 1.00\}$).}
+\label{tab:best_per_k_clean_mixed}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{c l r r l r r}
+\toprule
+& \multicolumn{3}{c}{\textbf{Clean-trained}} & \multicolumn{3}{c}{\textbf{Mixed-trained}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+$k$ & Sensors & F1 & Acc & Sensors & F1 & Acc \\
+\midrule
+1 & Acc\_chest & 0.459 & 0.461 & Acc\_chest & 0.575 & 0.572 \\
+2 & Mag\_arm, Acc\_chest & 0.556 & 0.580 & Mag\_arm, Acc\_chest & 0.624 & 0.651 \\
+3 & Acc\_arm, Mag\_arm, Acc\_chest & 0.603 & 0.616 & Mag\_ankle, Mag\_arm, Acc\_chest & 0.625 & 0.655 \\
+4 & Acc\_arm, Mag\_ankle, Mag\_arm, Acc\_chest & 0.602 & 0.630 & Acc\_ankle, Mag\_ankle, Mag\_arm, Acc\_chest & 0.641 & 0.670 \\
+5 & Acc\_ankle, Acc\_arm, Mag\_ankle, Mag\_arm, Acc\_chest & 0.615 & 0.639 & Acc\_ankle, Acc\_arm, Mag\_ankle, Mag\_arm, Acc\_chest & 0.635 & 0.661 \\
+6 & Acc\_ankle, Acc\_arm, Mag\_ankle, Mag\_arm, Acc\_chest, ECG & 0.597 & 0.635 & Acc\_ankle, Acc\_arm, Gyro\_arm, Mag\_ankle, Mag\_arm, Acc\_chest & 0.606 & 0.625 \\
+7 & Acc\_ankle, Acc\_arm, Gyro\_ankle, Mag\_ankle, Mag\_arm, Acc\_chest, ECG & 0.580 & 0.616 & Acc\_ankle, Acc\_arm, Gyro\_ankle, Gyro\_arm, Mag\_ankle, Mag\_arm, Acc\_chest & 0.611 & 0.632 \\
+8 & Acc\_ankle, Acc\_arm, Gyro\_ankle, Gyro\_arm, Mag\_ankle, Mag\_arm, Acc\_chest, ECG & 0.540 & 0.572 & Acc\_ankle, Acc\_arm, Gyro\_ankle, Gyro\_arm, Mag\_ankle, Mag\_arm, Acc\_chest, ECG & 0.568 & 0.604 \\
+\bottomrule
+\end{tabular}
+\end{table}
